@@ -206,9 +206,9 @@ static void imx9_dumpnvic(const char *msg, int irq)
           getreg32(NVIC_IRQ212_215_PRIORITY),
           getreg32(NVIC_IRQ216_219_PRIORITY));
 #endif
-#if IMX9_IRQ_NEXTINT > 218
-#  warning Missing logic
-#endif
+/* IMX9_IRQ_NEXTINT extended to 248 to cover MSGINTR1/2 at extints 246/247.
+ * The extint 224-255 range is handled above by NVIC_IRQ224_239_ENABLE.
+ */
 
   leave_critical_section(flags);
 }
@@ -340,14 +340,22 @@ static int imx9_irqinfo(int irq, uintptr_t *regaddr, uint32_t *bit,
       else
 #endif
 #if IMX9_IRQ_NEXTINT > 192
-      if (extint < 219)
+      if (extint < 224)
         {
            *regaddr = (NVIC_IRQ192_223_ENABLE + offset);
            *bit     = 1 << (extint - 192);
         }
       else
 #endif
-#if IMX9_IRQ_NEXTINT > 218
+#if IMX9_IRQ_NEXTINT > 224
+      if (extint < 256)
+        {
+           *regaddr = (NVIC_IRQ224_239_ENABLE + offset);
+           *bit     = 1 << (extint - 224);
+        }
+      else
+#endif
+#if IMX9_IRQ_NEXTINT > 256
 #  error Missing logic
 #endif
         {

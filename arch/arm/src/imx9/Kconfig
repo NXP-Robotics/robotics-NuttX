@@ -1061,6 +1061,76 @@ config IMX9_MU8
 
 endif # IMX9_MU Configuration
 
+menu "MSGINTR"
+
+config IMX9_MSGINTR
+	bool "MSGINTR write-to-address doorbell"
+	default n
+	---help---
+		Enable the MSGINTR driver. MSGINTR allows PCIe endpoints to raise
+		NVIC interrupts on the M7 by writing to a memory-mapped address.
+		Required for NETC VSI interrupt delivery.
+
+endmenu # MSGINTR
+
+menu "NETC Ethernet"
+
+config IMX9_NETC_VSI
+	bool "NETC Virtual Station Interface (VSI)"
+	default n
+	select IMX9_MSGINTR
+	select NET
+	select ARCH_HAVE_NET
+	---help---
+		Enable the NETC VSI Ethernet driver for iMX95. The M7 core operates
+		as a VSI (SR-IOV VF); the PSI (Physical Station Interface) runs on
+		the A55/Linux side. Requires MSGINTR for interrupt delivery.
+
+if IMX9_NETC_VSI
+
+config IMX9_NETC_VSI_TX_RING_LEN
+	int "TX BD ring length (number of descriptors)"
+	default 8
+	---help---
+		Number of TX buffer descriptors. Must be a power of 2. Each
+		descriptor references one TX frame buffer.
+
+config IMX9_NETC_VSI_RX_RING_LEN
+	int "RX BD ring length (number of descriptors)"
+	default 8
+	---help---
+		Number of RX buffer descriptors. Must be a power of 2. Each
+		descriptor has a pre-allocated frame buffer of RX_BUF_SIZE bytes.
+
+config IMX9_NETC_VSI_TX_BUF_SIZE
+	int "TX frame buffer size in bytes"
+	default 1536
+	---help---
+		Size of each TX frame buffer. Must be >= maximum Ethernet frame
+		size (1522 bytes for VLAN-tagged frames). Aligned up to 64 bytes.
+
+config IMX9_NETC_VSI_RX_BUF_SIZE
+	int "RX frame buffer size in bytes"
+	default 1536
+	---help---
+		Size of each RX frame buffer. Must be >= maximum Ethernet frame
+		size. Aligned up to 64 bytes.
+
+config IMX9_NETC_VSI_THREAD_PRIORITY
+	int "Service thread priority"
+	default 100
+	---help---
+		Priority of the NETC VSI service kthread (netc_vsi). This thread
+		handles RX frame delivery and SR-IOV link state changes.
+
+config IMX9_NETC_VSI_THREAD_STACKSIZE
+	int "Service thread stack size in bytes"
+	default 4096
+
+endif # IMX9_NETC_VSI
+
+endmenu # NETC Ethernet
+
 endmenu # iMX Peripheral Selection
 
 endif # ARCH_CHIP_IMX9

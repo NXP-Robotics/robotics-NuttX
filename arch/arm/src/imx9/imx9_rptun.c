@@ -110,6 +110,13 @@ static const struct rptun_ops_s g_imx9_rptun_ops =
 
 struct imx9_rptun_dev_s g_rptun_dev;
 
+/* Semaphore posted on the first MU7 kick from the A55.
+ * Used by imx9_rptun_wait_ready() to gate NETC VSI initialization.
+ */
+
+static sem_t g_rptun_ready;
+static bool  g_rptun_ready_posted;
+
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
@@ -255,6 +262,12 @@ static void imx9_mu_callback(int id, uint32_t msg, void *arg)
         {
           dev->callback(dev->arg, vqid);
         }
+
+      if (!g_rptun_ready_posted)
+        {
+          g_rptun_ready_posted = true;
+          nxsem_post(&g_rptun_ready);
+        }
     }
 
   else
@@ -273,6 +286,9 @@ int imx9_rptun_init(const char *shmemname, const char *cpuname)
 {
   struct imx9_rptun_dev_s *dev = &g_rptun_dev;
   int ret                      = OK;
+
+  nxsem_init(&g_rptun_ready, 0, 0);
+  g_rptun_ready_posted = false;
 
   /* Subscribe to MU */
 
@@ -298,4 +314,21 @@ int imx9_rptun_init(const char *shmemname, const char *cpuname)
     }
 
   return ret;
+}
+
+/****************************************************************************
+ * Name: imx9_rptun_wait_ready
+ *
+ * Description:
+ *   Block until the first MU7 rptun kick from the A55 has been received.
+ *   At that point the NETCMIX TRDC firewall has been opened by Linux and
+ *   it is safe to access the NETC PCI config space.  Re-entrant: if called
+ *   a second time (e.g. after ifdown/ifup) it returns immediately because
+ *   the semaphore is re-posted before returning on the first call.
+ ****************************************************************************/
+
+void imx9_rptun_wait_ready(void)
+{
+  nxsem_wait_uninterruptible(&g_rptun_ready);
+  nxsem_post(&g_rptun_ready);
 }

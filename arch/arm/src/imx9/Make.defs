@@ -83,3 +83,31 @@ endif
 ifeq ($(CONFIG_IMX9_EDMA), y)
   CHIP_CSRCS += imx9_edma.c
 endif
+
+ifeq ($(CONFIG_IMX9_MSGINTR), y)
+  CHIP_CSRCS += imx9_msgintr.c
+endif
+
+ifeq ($(CONFIG_IMX9_NETC_VSI), y)
+  CHIP_CSRCS += imx9_netc_msg.c imx9_netc_vsi.c
+endif
+
+ifeq ($(CONFIG_IMX9_NETC_VSI), y)
+  CFLAGS += -I$(ARCH_SRCDIR)/chip/nxp_sdk/netc
+  CFLAGS += -I$(ARCH_SRCDIR)/chip/nxp_sdk
+  CFLAGS += -DCPU_MIMX9594AVZXN_cm7
+  CFLAGS += -DFSL_FEATURE_NETC_HAS_NO_XGMII=1
+  CFLAGS += -DFSL_FEATURE_NETC_HAS_NO_SWITCH=1
+  CFLAGS += -DSDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY=800000000U
+  CFLAGS += -include $(ARCH_SRCDIR)/chip/nxp_sdk/MIMX9594_cm7_COMMON.h
+  CHIP_CSRCS += nxp_sdk/netc/fsl_netc_endpoint.c
+  CHIP_CSRCS += nxp_sdk/netc/fsl_netc_msg.c
+  CHIP_CSRCS += nxp_sdk/netc/fsl_netc_soc.c
+  CHIP_CSRCS += nxp_sdk/netc/netc_hw/fsl_netc_hw.c
+  CHIP_CSRCS += nxp_sdk/netc/netc_hw/fsl_netc_hw_enetc.c
+  CHIP_CSRCS += nxp_sdk/netc/netc_hw/fsl_netc_hw_port.c
+  CHIP_CSRCS += nxp_sdk/netc/netc_hw/fsl_netc_hw_si.c
+
+  # Ensure output subdirectories exist before the compiler tries to write .o files.
+  $(shell mkdir -p nxp_sdk/netc/netc_hw)
+endif

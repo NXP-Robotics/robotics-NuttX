@@ -44,4 +44,15 @@
 
 int imx9_rptun_init(const char *shmemname, const char *cpuname);
 
+/****************************************************************************
+ * Name: imx9_rptun_wait_ready
+ *
+ * Description:
+ *   Block until the first MU7 rptun kick from the A55 has been received.
+ *   At that point the NETCMIX TRDC firewall has been opened by Linux and
+ *   it is safe to access the NETC PCI config space.
+ ****************************************************************************/
+
+void imx9_rptun_wait_ready(void);
+
 #endif /* __ARCH_ARM_SRC_IMX9_IMX9_RPTUN_H */

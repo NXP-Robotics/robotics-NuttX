@@ -164,7 +164,19 @@ void imx9_mpu_initialize(void)
                        MPU_RASR_C        | /* Cacheable                  */
                        MPU_RASR_B        | /* Bufferable                 */
                        MPU_RASR_S        | /* Shareable                  */
-                       MPU_RASR_XN         /* Execute-never to prevent instruction fetch */
+                       MPU_RASR_XN         /* Execute-never               */
+                       );
+
+  /* DTCM netc_dma sub-region (0x20000000, 32 KB): non-cacheable Normal
+   * memory for .netc_dma (NETC BD rings and frame buffers).  Only the
+   * first 32 KB of DTCM are marked non-cacheable; the remaining 224 KB
+   * (sram/heap) retain the cacheable attribute from the region above.
+   * The higher MPU region number takes priority on ARMv7-M. */
+
+  mpu_configure_region(IMX9_DTCM_BASE, 32 * 1024,
+                       MPU_RASR_AP_RWRW  | /* P:RW   U:RW                */
+                       MPU_RASR_TEX_NOR  | /* Normal, non-cacheable      */
+                       MPU_RASR_XN         /* Execute-never               */
                        );
 
   mpu_configure_region(0x20400000, 1 * 1024 * 1024,
@@ -204,6 +216,16 @@ void imx9_mpu_initialize(void)
                        );
 
   mpu_configure_region(IMX9_GPIO1_BASE, 64 * 1024,
+                       MPU_RASR_AP_RWRW  | /* P:RW   U:RW                */
+                       MPU_RASR_TEX_DEV    /* Device                     */
+                       );
+
+  /* NETC peripheral space: PSI/VSI SI registers, PCI config, IERB, etc.
+   * This 8 MB window covers 0x4C800000-0x4CFFFFFF and includes VSI0 at
+   * 0x4CD20000 as well as all PSI and global NETC register blocks.
+   */
+
+  mpu_configure_region(0x4C800000, 8 * 1024 * 1024,
                        MPU_RASR_AP_RWRW  | /* P:RW   U:RW                */
                        MPU_RASR_TEX_DEV    /* Device                     */
                        );

@@ -103,5 +103,13 @@ const void * const _vectors[] locate_data(".vectors")
 
   [2 ... NVIC_IRQ_PENDSV] = &exception_common,
   [(NVIC_IRQ_PENDSV + 1) ... (15 + ARMV7M_PERIPHERAL_INTERRUPTS)]
-                          = &exception_direct
+                          = &exception_direct,
+
+  /* Explicit entry for IRQSTEER_0 (vector 240 = extint 224 = 16+224).
+   * This vector is used to receive MSGINTR1/2 interrupts routed through the
+   * WAKEUPMIX IRQSTEER on iMX95.  The designated-range initializer above
+   * already covers this slot, but an explicit entry documents the intent and
+   * ensures it survives future edits to ARMV7M_PERIPHERAL_INTERRUPTS.
+   */
+  [16 + 224] = &exception_direct
 };

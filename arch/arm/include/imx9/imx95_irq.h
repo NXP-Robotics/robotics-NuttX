@@ -411,7 +411,11 @@
 #define IMX9_IRQ_RESERVED400     (IMX9_IRQ_EXTINT + 384) /* CAMERAMIX CSI1 */
 #define IMX9_IRQ_RESERVED401     (IMX9_IRQ_EXTINT + 385) /* CAMERAMIX CSI2 */
 
-#define IMX9_IRQ_NEXTINT        (218)
+/* Extended to 248 to cover MSGINTR1 (extint+246) and MSGINTR2 (extint+247).
+ * The iMX95 M7 NVIC supports up to 256 external interrupts; the 32-bit
+ * NVIC_IRQ224_239_ENABLE register (offset 0x011C) covers extints 224-255.
+ */
+#define IMX9_IRQ_NEXTINT        (248)
 
 /* Total amount of entries in system vector table */
 

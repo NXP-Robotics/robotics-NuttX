@@ -87,4 +87,12 @@ if(CONFIG_IMX9_EDMA)
   list(APPEND SRCS imx9_edma.c)
 endif()
 
+if(CONFIG_IMX9_MSGINTR)
+  list(APPEND SRCS imx9_msgintr.c)
+endif()
+
+if(CONFIG_IMX9_NETC_VSI)
+  list(APPEND SRCS imx9_netc_msg.c imx9_netc_vsi.c)
+endif()
+
 target_sources(arch PRIVATE ${SRCS})
