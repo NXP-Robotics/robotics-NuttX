@@ -114,6 +114,10 @@
 
 #define SCMI_MSG_TYPE_NOTIFY 3u
 
+/* SCMI system power protocol message IDs */
+
+#define SCMI_MSG_SYSTEM_POWER_STATE_SET 0x3u /* Set system power state */
+
 /* SCMI header creation */
 
 #define SCMI_HEADER_MSG(x)      (((x) & 0xffu) << 0u)
@@ -1137,6 +1141,65 @@ int32_t imx9_scmi_siinfoget(uint32_t channel, scmi_si_info_t *info)
 
   return status;
 }
+
+int32_t imx9_scmi_syspowerstateset(uint32_t channel, uint32_t flags,
+                                   uint32_t system_state)
+{
+  int32_t status;
+  uint32_t header;
+  void *msg;
+
+  /* Acquire lock */
+
+  SCMI_A2P_LOCK(channel);
+
+  /* Init buffer */
+
+  status = imx9_scmi_bufinit(channel, &msg);
+
+  /* Send request */
+
+  if (status == OK)
+    {
+      /* Request message structure */
+
+      typedef struct
+      {
+        uint32_t header;
+        uint32_t flags;
+        uint32_t system_state;
+      } msg_tsys3_t;
+
+      msg_tsys3_t *msgtx = (msg_tsys3_t *)msg;
+
+      /* Fill in parameters */
+
+      msgtx->flags        = flags;
+      msgtx->system_state = system_state;
+
+      /* Send message */
+
+      status = imx9_scmi_a2ptx(channel, SCMI_PROTOCOL_SYS,
+                               SCMI_MSG_SYSTEM_POWER_STATE_SET,
+                               sizeof(msg_tsys3_t), &header);
+    }
+
+  /* Receive response */
+
+  if (status == OK)
+    {
+      status = imx9_scmi_a2prx(channel, sizeof(msg_status_t), header);
+    }
+
+  /* Release lock */
+
+  SCMI_A2P_UNLOCK(channel);
+
+  /* Return status */
+
+  return status;
+}
+
 
 void imx9_scmi_initialize()
 {

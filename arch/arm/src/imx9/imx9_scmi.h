@@ -36,6 +36,17 @@
 
 #define SM_PLATFORM_A2P      0 /* SCMI Agent -> SCMI Platform */
 #define SM_PLATFORM_NOTIFY   1 /* SCMI Platform -> SCMI Agent */
+
+/* SCMI system power states (standard states scoped to caller LM) */
+
+#define SCMI_SYS_STATE_SHUTDOWN   0x00000000u /* Shutdown (off) */
+#define SCMI_SYS_STATE_COLD_RESET 0x00000001u /* Cold reset */
+#define SCMI_SYS_STATE_WARM_RESET 0x00000002u /* Warm reset */
+
+/* SCMI system power request flags */
+
+#define SCMI_SYS_FLAG_FORCEFUL 0x0u /* Forceful request */
+#define SCMI_SYS_FLAG_GRACEFUL 0x1u /* Graceful request */
 #define SM_PLATFORM_PRIORITY 2
 
 /* SCMI protocol IDs */
@@ -191,6 +202,15 @@ typedef void (*imx9_scmi_notify_cb_t)(uint32_t protocol, uint32_t msgid,
  * Public Function Prototypes
  ****************************************************************************/
 
+#undef EXTERN
+#if defined(__cplusplus)
+#define EXTERN extern "C"
+extern "C"
+{
+#else
+#define EXTERN extern
+#endif
+
 /****************************************************************************
  * Name: imx9_scmi_initialize
  *
@@ -212,6 +232,8 @@ int32_t imx9_scmi_clockconfigset(uint32_t channel, uint32_t clockid,
     uint32_t attributes, uint32_t oem_config_val);
 int32_t imx9_scmi_pinctrlconfigset(uint32_t channel, uint32_t identifier,
     uint32_t attributes, const scmi_pin_config_t *configs);
+int32_t imx9_scmi_syspowerstateset(uint32_t channel, uint32_t flags,
+    uint32_t system_state);
 
 /****************************************************************************
  * Name: imx9_scmi_siinfoget
@@ -352,4 +374,8 @@ int32_t imx9_scmi_bbmgprset(uint32_t channel, uint32_t index,
 int32_t imx9_scmi_bbmgprget(uint32_t channel, uint32_t index,
                             uint32_t *value);
 
+#undef EXTERN
+#if defined(__cplusplus)
+}
+#endif
 #endif /* __ARCH_ARM_SRC_IMX9_IMX9_SCMI_H */
