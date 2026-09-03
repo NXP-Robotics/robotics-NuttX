@@ -43,6 +43,19 @@
 #define SCMI_SYS_STATE_COLD_RESET 0x00000001u /* Cold reset */
 #define SCMI_SYS_STATE_WARM_RESET 0x00000002u /* Warm reset */
 
+/* SCMI CPU protocol (0x82): reset vector + i.MX95 M7 CPU identifier */
+
+#define SCMI_MSG_CPU_RESET_VECTOR_SET 0x06u /* Set CPU reset vector */
+
+/* Must match the SM firmware config: M7 is CPU index 1 */
+#define SM_PLATFORM_CPU_M7_CPUID 1u
+
+/* CPU reset-vector flags */
+#define SCMI_CPU_VEC_FLAG_TABLE  0x00000001u /* vector is a table base */
+#define SCMI_CPU_VEC_FLAG_BOOT   0x20000000u /* update boot vector */
+#define SCMI_CPU_VEC_FLAG_START  0x40000000u /* update start vector */
+#define SCMI_CPU_VEC_FLAG_RESUME 0x80000000u /* update resume vector */
+
 /* SCMI system power request flags */
 
 #define SCMI_SYS_FLAG_FORCEFUL 0x0u /* Forceful request */
@@ -234,6 +247,8 @@ int32_t imx9_scmi_pinctrlconfigset(uint32_t channel, uint32_t identifier,
     uint32_t attributes, const scmi_pin_config_t *configs);
 int32_t imx9_scmi_syspowerstateset(uint32_t channel, uint32_t flags,
     uint32_t system_state);
+int32_t imx9_scmi_cpuresetvectorset(uint32_t channel, uint32_t cpuid,
+    uint32_t flags, uint64_t resetvector);
 
 /****************************************************************************
  * Name: imx9_scmi_siinfoget
