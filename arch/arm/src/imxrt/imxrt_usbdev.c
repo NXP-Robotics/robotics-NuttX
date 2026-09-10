@@ -2341,9 +2341,7 @@ static void *imxrt_epallocbuffer(struct usbdev_ep_s *ep, uint16_t bytes)
 #ifdef CONFIG_USBDEV_DMAMEMORY
   return usbdev_dma_alloc(bytes);
 #else
-  void *buf = cache_aligned_alloc(bytes);
-  memset(buf, 0, bytes);
-  return buf;
+  return cache_aligned_alloc(bytes);
 #endif
 }
 #endif
