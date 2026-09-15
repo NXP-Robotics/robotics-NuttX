@@ -1,8 +1,9 @@
 /****************************************************************************
  * arch/arm/src/imx9/imx9_rptun.c
  *
+ * Copyright 2024, 2026 NXP
+ *
  * SPDX-License-Identifier: Apache-2.0
- * SPDX-FileCopyrightText: 2024 NXP
  *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with

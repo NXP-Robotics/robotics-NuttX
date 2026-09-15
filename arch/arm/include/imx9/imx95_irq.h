@@ -2,7 +2,7 @@
  * arch/arm/include/imx9/imx95_irq.h
  *
  * SPDX-License-Identifier: Apache-2.0
- * SPDX-FileCopyrightText: 2024 NXP
+ * Copyright 2024, 2026 NXP
  *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with

@@ -1,5 +1,6 @@
 /****************************************************************************
- * arch/arm/src/imx9/imx9_netc_priv.h
+ *
+ * Copyright 2024-2026 NXP
  *
  * SPDX-License-Identifier: Apache-2.0
  *
