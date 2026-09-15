@@ -1,0 +1,63 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "spdxVersion": "SPDX-2.3",
+  "creationInfo": {
+    "created": "2026-09-21T06:33:36Z",
+    "creators": [
+      "Organization: NXP"
+    ],
+    "licenseListVersion": "3.28"
+  },
+  "name": "robotics-nuttx-0.7.0",
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://nxp.com/spdx/d16cda5c-9fe9-4d12-bdce-539072b9bcc2",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-package-d16cda5c-9fe9-4d12-bdce-539072b9bcc2",
+      "name": "robotics-nuttx",
+      "versionInfo": "0.7.0",
+      "licenseConcluded": "(Apache-2.0)",
+      "licenseDeclared": "(Apache-2.0)",
+      "downloadLocation": "https://github.com/nxp-robotics/robotics-nuttx",
+      "originator": "Organization: NXP",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-d16cda5c-9fe9-4d12-bdce-539072b9bcc2---7ee34683-a3ca-4db8-b823-c386eecb241e",
+      "name": "apache/nuttx",
+      "versionInfo": "nuttx-11.0.0",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: apache",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "e4570a63-a129-4358-b8b5-0efa19456b02",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        },
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/apache/nuttx@nuttx-11.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-package-d16cda5c-9fe9-4d12-bdce-539072b9bcc2"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d16cda5c-9fe9-4d12-bdce-539072b9bcc2",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-d16cda5c-9fe9-4d12-bdce-539072b9bcc2---7ee34683-a3ca-4db8-b823-c386eecb241e"
+    }
+  ]
+}
