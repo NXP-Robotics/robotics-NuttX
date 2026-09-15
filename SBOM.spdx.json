@@ -1,0 +1,110 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "spdxVersion": "SPDX-2.3",
+  "creationInfo": {
+    "created": "2026-09-21T06:34:10Z",
+    "creators": [
+      "Organization: NXP"
+    ],
+    "licenseListVersion": "3.28"
+  },
+  "name": "robotics-nuttx-0.7.0_navq95",
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://nxp.com/spdx/54ac779d-4788-4d56-923b-8b392291673b",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b",
+      "name": "robotics-nuttx",
+      "versionInfo": "0.7.0_navq95",
+      "licenseConcluded": "(Apache-2.0)",
+      "licenseDeclared": "(Apache-2.0)",
+      "downloadLocation": "https://github.com/nxp-robotics/robotics-nuttx",
+      "originator": "Organization: NXP",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b---7ee34683-a3ca-4db8-b823-c386eecb241e",
+      "name": "apache/nuttx",
+      "versionInfo": "nuttx-11.0.0",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: apache",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "e4570a63-a129-4358-b8b5-0efa19456b02",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        },
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/apache/nuttx@nuttx-11.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b---925e6340-449b-4c57-9ebd-558e6429b7db",
+      "name": "CMSIS_5",
+      "versionInfo": "5.4.0",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://github.com/ARM-software/CMSIS_5",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: arm-software",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "7b449f59-3e0b-4113-9c7d-4984f1687ce0",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        },
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/arm-software/cmsis_5@5.4.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b---3e16666f-6dd3-45b7-a2dc-f8046d03e649",
+      "name": "nxp-mcuxpresso/mcuxsdk-core",
+      "versionInfo": "Real-Time-Edge-v3.5-202607",
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "homepage": "https://github.com/nxp-mcuxpresso/mcuxsdk-core",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: unknown",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b---3e16666f-6dd3-45b7-a2dc-f8046d03e649"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b---7ee34683-a3ca-4db8-b823-c386eecb241e"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-54ac779d-4788-4d56-923b-8b392291673b---925e6340-449b-4c57-9ebd-558e6429b7db"
+    }
+  ]
+}
