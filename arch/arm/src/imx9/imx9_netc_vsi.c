@@ -837,90 +837,8 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
   priv->dev.d_len = (uint16_t)length;
 
 #ifdef CONFIG_NET_IPv4
-  /* Avoid NuttX alleged IPv4 stack ICMP reply issue, trying to resolve DRaddr
-   * for destination from same subnet.
-   */
   if (BUF->ether_type == HTONS(ETHTYPE_IP))
     {
-      /* Fast-path ICMP echo request handler.
-       * Build the reply in-place in rx_frame and send it directly,
-       * bypassing the NuttX IPv4 stack / arp_out() entirely.  This avoids
-       * the "who has 0.0.0.0?" ARP that arp_out() generates when d_draddr
-       * is not set and the ARP table lookup fails. */
-      {
-        struct ether_header *_eth =
-          (struct ether_header *)priv->rx_frame;
-        struct ipv4_hdr_s   *_ip  =
-          (struct ipv4_hdr_s *)(priv->rx_frame + sizeof(struct ether_header));
-        uint8_t  _ihl  = (_ip->vhl & 0x0fu) * 4u;
-        uint8_t *_icmp = priv->rx_frame + sizeof(struct ether_header) + _ihl;
-
-        if (_ip->proto == IP_PROTO_ICMP && _icmp[0] == 8u &&
-            memcmp(_ip->destipaddr, &priv->dev.d_ipaddr, 4) == 0)
-          {
-            uint8_t  _tmpmac[ETHER_ADDR_LEN];
-            uint8_t  _tmpip[4];
-            uint16_t _iplen;
-            uint16_t _icmplen;
-            const uint16_t *_p;
-            uint32_t _sum;
-            uint16_t _n;
-            uint16_t _i;
-
-#ifdef ENETC_VSI_DEBUG_TRX
-            syslog(LOG_ERR, "VSI RX: ICMP echo request - replying directly\n");
-#endif
-            /* Swap Ethernet MACs */
-            memcpy(_tmpmac, _eth->ether_dhost, ETHER_ADDR_LEN);
-            memcpy(_eth->ether_dhost, _eth->ether_shost, ETHER_ADDR_LEN);
-            memcpy(_eth->ether_shost, _tmpmac, ETHER_ADDR_LEN);
-            memcpy(_eth->ether_shost,
-                   priv->dev.d_mac.ether.ether_addr_octet,
-                   ETHER_ADDR_LEN);
-
-            /* Swap IPv4 src/dst */
-            memcpy(_tmpip, _ip->srcipaddr, 4);
-            memcpy(_ip->srcipaddr, _ip->destipaddr, 4);
-            memcpy(_ip->destipaddr, _tmpip, 4);
-
-            /* Recompute IPv4 header checksum */
-            _ip->ipchksum = 0;
-            _p   = (const uint16_t *)_ip;
-            _sum = 0;
-            _n   = _ihl / 2u;
-            for (_i = 0; _i < _n; _i++) { _sum += _p[_i]; }
-            _sum = (_sum >> 16) + (_sum & 0xffffu);
-            _sum += (_sum >> 16);
-            _ip->ipchksum = (uint16_t)(~_sum);
-
-            /* Change ICMP type from 8 (request) to 0 (reply) */
-            _icmp[0] = 0u;
-            _icmp[2] = 0;
-            _icmp[3] = 0;
-
-            /* Recompute ICMP checksum */
-            _iplen   = (uint16_t)((_ip->len[0] << 8) | _ip->len[1]);
-            _icmplen = _iplen - _ihl;
-            _p       = (const uint16_t *)_icmp;
-            _sum     = 0;
-            _n       = _icmplen / 2u;
-            for (_i = 0; _i < _n; _i++) { _sum += _p[_i]; }
-            if (_icmplen & 1u)
-              {
-                _sum += (uint16_t)_icmp[_icmplen - 1u] << 8;
-              }
-            _sum = (_sum >> 16) + (_sum & 0xffffu);
-            _sum += (_sum >> 16);
-            _icmp[2] = (uint8_t)((~_sum) & 0xffu);
-            _icmp[3] = (uint8_t)((~_sum) >> 8);
-
-            imx9_netc_vsi_tx(priv, priv->rx_frame, length);
-
-            net_unlock();
-            return 0;
-          }
-      }
-
 #ifdef CONFIG_NET_ARP
       arp_ipin(&priv->dev);
 #endif
@@ -928,9 +846,6 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
 
       if (priv->dev.d_len > 0)
         {
-#ifdef CONFIG_NET_ARP
-          arp_out(&priv->dev);
-#endif
           imx9_netc_vsi_transmit(&priv->dev);
         }
     }
@@ -1020,10 +935,6 @@ int imx9_netc_vsi_tx(struct imx9_netc_vsi_s *priv,
 
   pkt.buffer = ddr_buf;
   pkt.length = (uint32_t)len;
-
-
-
-
 
   EP_ReclaimTxDescriptor(handle, 0);
 
