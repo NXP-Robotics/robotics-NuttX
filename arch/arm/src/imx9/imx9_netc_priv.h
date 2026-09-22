@@ -127,6 +127,25 @@
   (((CONFIG_IMX9_NETC_VSI_RX_BUF_SIZE) + NETC_BUFF_ALIGN - 1u) & \
    ~(NETC_BUFF_ALIGN - 1u))
 
+/* TX frame buffer size (aligned to NETC_BUFF_ALIGN), symmetric with RX */
+
+#define NETC_TX_FRAME_BUF_SIZE \
+  (((CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE) + NETC_BUFF_ALIGN - 1u) & \
+   ~(NETC_BUFF_ALIGN - 1u))
+
+/* Number of RX BD rings owned by this VSI (single-ring configuration). */
+
+#define NETC_VSI_RX_RING_COUNT   1U
+
+/* capability.vsiNum reported to the NXP SDK.  EP_VsiEnableInterrupt only
+ * asserts getSiNum(cfg.si) <= capability.vsiNum, so this is set to the
+ * number of VSIs ENETC0 exposes on iMX95 (>= 4) rather than being read
+ * back from the PSI-owned ENETC management block, whose access from the
+ * M7 can disturb the Linux PSI driver on the NETC interconnect.
+ */
+
+#define NETC_VSI_ENETC0_VSI_NUM  4U
+
 /* MAC filter type bits (VSI->PSI mailbox ABI) */
 
 #define NETC_MAC_FILTER_TYPE_UC  (1u << 0)
@@ -191,7 +210,7 @@ struct imx9_netc_vsi_s
 
   /* TX path */
 
-  uint8_t (*tx_buff)[CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE];
+  uint8_t (*tx_buff)[NETC_TX_FRAME_BUF_SIZE];
   uint8_t   tx_idx;    /* round-robin index into tx_buff[] */
   sem_t   tx_sem;
 
@@ -200,6 +219,7 @@ struct imx9_netc_vsi_s
   sem_t    rx_sem;
   pid_t    rx_thread_pid;
   uint8_t *rx_frame;   /* non-cacheable single-frame reassembly buffer */
+  uint8_t *tx_frame;   /* non-cacheable scratch for devif_poll on TX */
 
   /* VSI->PSI control message buffer (non-cacheable, 64-byte aligned) */
 

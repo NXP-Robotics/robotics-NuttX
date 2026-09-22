@@ -147,34 +147,38 @@ static int  imx9_netc_vsi_ioctl(struct net_driver_s *dev, int cmd,
  * around DMA operations (see imx9_netc_msg.c).
  */
 
-volatile uint8_t g_vsi0_tx_buff[CONFIG_IMX9_NETC_VSI_TX_RING_LEN]
-                              [CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE]
+uint8_t g_vsi0_tx_buff[CONFIG_IMX9_NETC_VSI_TX_RING_LEN]
+                              [NETC_TX_FRAME_BUF_SIZE]
   __attribute__((section(".netc_dma"),
                  aligned(NETC_BUFF_ALIGN)));
 
-volatile uint8_t g_vsi0_msg_buff[NETC_MSG_VSI_BUF_SIZE]
+uint8_t g_vsi0_msg_buff[NETC_MSG_VSI_BUF_SIZE]
   __attribute__((section(".netc_dma"),
                  aligned(NETC_BUFF_ALIGN)));
 
-volatile netc_tx_bd_t g_vsi0_txbd[CONFIG_IMX9_NETC_VSI_TX_RING_LEN]
+netc_tx_bd_t g_vsi0_txbd[CONFIG_IMX9_NETC_VSI_TX_RING_LEN]
   __attribute__((section(".netc_dma"),
                  aligned(NETC_BD_ALIGN)));
 
-volatile netc_tx_frame_info_t
+netc_tx_frame_info_t
   g_vsi0_txdirty[CONFIG_IMX9_NETC_VSI_TX_RING_LEN];
 
-volatile netc_rx_buf_t g_vsi0_rx_buff[CONFIG_IMX9_NETC_VSI_RX_RING_LEN]
+netc_rx_buf_t g_vsi0_rx_buff[CONFIG_IMX9_NETC_VSI_RX_RING_LEN]
   __attribute__((section(".netc_dma"),
                  aligned(NETC_BUFF_ALIGN)));
 
-volatile uint64_t
+uint64_t
   g_vsi0_rx_buff_addr[CONFIG_IMX9_NETC_VSI_RX_RING_LEN];
 
-volatile uint8_t g_vsi0_rx_frame[NETC_RX_FRAME_BUF_SIZE]
+uint8_t g_vsi0_rx_frame[NETC_RX_FRAME_BUF_SIZE]
   __attribute__((section(".netc_dma"),
                  aligned(NETC_BUFF_ALIGN)));
 
-volatile netc_rx_bd_t g_vsi0_rxbd[CONFIG_IMX9_NETC_VSI_RX_RING_LEN]
+uint8_t g_vsi0_tx_frame[NETC_TX_FRAME_BUF_SIZE]
+  __attribute__((section(".netc_dma"),
+                 aligned(NETC_BUFF_ALIGN)));
+
+netc_rx_bd_t g_vsi0_rxbd[CONFIG_IMX9_NETC_VSI_RX_RING_LEN]
   __attribute__((section(".netc_dma"),
                  aligned(NETC_BD_ALIGN)));
 
@@ -413,12 +417,11 @@ static int imx9_netc_vsi_si_bringup(struct imx9_netc_vsi_s *priv)
 
   cfg->bdr_init(&bdr_cfg, rx_cfg, tx_cfg);
 
-  /* Populate capability.vsiNum without accessing the PSI-privileged ENETC
-   * management block at hw.base (ENETC0_BASE = 0x4CC10000).  That register
-   * block is owned by the PSI/A55 and M7 reads to it can disrupt the Linux
-   * PSI driver on the NETC interconnect.
+  /* Populate capability.vsiNum without accessing the PSI-privileged
+   * ENETC management block (owned by the PSI/A55).  See
+   * NETC_VSI_ENETC0_VSI_NUM in imx9_netc_priv.h for the rationale.
    */
-  handle->capability.vsiNum = 4U;
+  handle->capability.vsiNum = NETC_VSI_ENETC0_VSI_NUM;
 
   /* Set RX BD ring grouping: 1 group of 1 ring. */
   NETC_SISetRxBDRGroup(handle->hw.si, 0, 1);
@@ -712,12 +715,12 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
   ep_handle_t      *handle = &priv->handle;
   netc_frame_attr_t attr;
   status_t          status;
+  status_t          rx_result;
+  uint32_t          length;
 
 #ifdef ENETC_VSI_DEBUG_TRX
   syslog(LOG_ERR, "\n\nVSI RX: entering!\n");
 #endif
-	status_t rx_result;
-	uint32_t length;
 
   /* Check rx frame size; any result other than success or empty requires
    * dropping the current BD to recycle it back to hardware.  Calling
@@ -899,7 +902,7 @@ int imx9_netc_vsi_tx(struct imx9_netc_vsi_s *priv,
       .length    = 1,
     };
 
-  if (len > CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE)
+  if (len > NETC_TX_FRAME_BUF_SIZE)
     {
       return -EMSGSIZE;
     }
@@ -1003,7 +1006,7 @@ static void imx9_netc_vsi_msgintr_cb(int instance, uint8_t channel,
        * frame notifications.  The service thread re-enables RXTIE after
        * draining the ring (NAPI-style: disable in ISR, re-arm after drain).
        */
-      EP_CleanRxIntrFlags(&priv->handle, 1U);
+      EP_CleanRxIntrFlags(&priv->handle, NETC_VSI_RX_RING_COUNT);
       nxsem_post(&priv->rx_sem);
     }
 
@@ -1186,7 +1189,7 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
         {
           priv->tx_pending = false;
           net_lock();
-          priv->dev.d_buf = priv->rx_frame;
+          priv->dev.d_buf = priv->tx_frame;
           devif_poll(&priv->dev, imx9_netc_vsi_transmit);
           priv->dev.d_buf = NULL;
           net_unlock();
@@ -1289,12 +1292,13 @@ static int imx9_netc_vsi_txavail(struct net_driver_s *dev)
       imx9_netc_vsi_transmit(dev);
     }
 
-  /* Use rx_frame as a scratch buffer for devif_poll (same as the service
-   * thread does).  rx_frame is in DDR and large enough for a max frame.
-   * imx9_netc_vsi_tx will copy from it into a separate tx_buff[] slot, so
-   * there is no overlapping-memcpy hazard. */
+  /* Use the dedicated TX scratch buffer for devif_poll (symmetric with
+   * the RX path, which uses rx_frame).  tx_frame is in the .netc_dma
+   * region and large enough for a max frame.  imx9_netc_vsi_tx copies
+   * from it into a separate tx_buff[] slot, so there is no overlapping
+   * memcpy hazard. */
 
-  dev->d_buf = priv->rx_frame;
+  dev->d_buf = priv->tx_frame;
   devif_poll(dev, imx9_netc_vsi_transmit);
   dev->d_buf = NULL;
 
@@ -1440,9 +1444,10 @@ int imx9_netc_vsi_initialize(void)
 
   memset(priv, 0, sizeof(*priv));
   priv->config    = cfg;
-  priv->tx_buff   = (uint8_t (*)[CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE])g_vsi0_tx_buff;
+  priv->tx_buff   = (uint8_t (*)[NETC_TX_FRAME_BUF_SIZE])g_vsi0_tx_buff;
   priv->msg_buff  = (uint8_t *)g_vsi0_msg_buff;
   priv->rx_frame  = (uint8_t *)g_vsi0_rx_frame;
+  priv->tx_frame  = (uint8_t *)g_vsi0_tx_frame;
 
   NETC_SocGetBaseResource(&handle->hw, (netc_hw_si_idx_t)cfg->si_idx);
 
