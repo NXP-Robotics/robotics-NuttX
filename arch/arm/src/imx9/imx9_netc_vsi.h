@@ -68,7 +68,7 @@ extern "C"
  *
  ****************************************************************************/
 
-int imx9_netc_vsi_initialize(void);
+int imx9_netc_vsi_initialize(int instance);
 
 #undef EXTERN
 #if defined(__cplusplus)

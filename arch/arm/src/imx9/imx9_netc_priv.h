@@ -247,6 +247,9 @@ struct imx9_netc_vsi_s
    */
 
   volatile bool link_notify;
+  volatile bool link_down_pending; /* set by ISR, cleared by service thread */
+  volatile bool needs_bringup;     /* set by ifdown, cleared by service thread */
+  volatile bool needs_ifup;        /* set by ifup, cleared by service thread */
 
   /* TX poll request from txavail().
    * Set in txavail() context, cleared and acted on in the service thread.

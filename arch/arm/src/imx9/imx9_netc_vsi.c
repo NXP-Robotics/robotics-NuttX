@@ -109,7 +109,7 @@
 
 /* Shorthand for the Ethernet header at the start of d_buf */
 
-#define BUF ((struct ether_header *)(priv->dev.d_buf /*+ CONFIG_NET_GUARDSIZE*/))
+#define BUF ((struct ether_header *)(priv->dev.d_buf))
 
 /****************************************************************************
  * Private Function Prototypes
@@ -141,94 +141,93 @@ static int  imx9_netc_vsi_ioctl(struct net_driver_s *dev, int cmd,
  * Private Data
  ****************************************************************************/
 
-/* DMA-accessible buffers for VSI instance 0.
- * Placed in .noncachable which lands in DDR (NOLOAD, remoteproc-loadable).
- * buffers reside in non-cacheable OCRAM (.netc_dma section),
- * around DMA operations (see imx9_netc_msg.c).
+/* NETC_VSI_DEFINE_BUFFERS(n) -- declare all DMA-accessible buffers and
+ * BD arrays for VSI instance n.  Placed in .netc_dma (non-cacheable DDR).
+ * The semicolon after the last declaration is supplied by the call site.
  */
 
-uint8_t g_vsi0_tx_buff[CONFIG_IMX9_NETC_VSI_TX_RING_LEN]
-                              [NETC_TX_FRAME_BUF_SIZE]
-  __attribute__((section(".netc_dma"),
-                 aligned(NETC_BUFF_ALIGN)));
+#define NETC_VSI_DEFINE_BUFFERS(n)                                            \
+  uint8_t g_vsi##n##_tx_buff                                         \
+    [CONFIG_IMX9_NETC_VSI_TX_RING_LEN][CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE]    \
+    __attribute__((section(".netc_dma"), aligned(NETC_BUFF_ALIGN)));          \
+  uint8_t g_vsi##n##_msg_buff[NETC_MSG_VSI_BUF_SIZE]                \
+    __attribute__((section(".netc_dma"), aligned(NETC_BUFF_ALIGN)));          \
+  netc_tx_bd_t                                                        \
+    g_vsi##n##_txbd[CONFIG_IMX9_NETC_VSI_TX_RING_LEN]                        \
+    __attribute__((section(".netc_dma"), aligned(NETC_BD_ALIGN)));            \
+  netc_tx_frame_info_t                                                \
+    g_vsi##n##_txdirty[CONFIG_IMX9_NETC_VSI_TX_RING_LEN];                    \
+  netc_rx_buf_t                                                        \
+    g_vsi##n##_rx_buff[CONFIG_IMX9_NETC_VSI_RX_RING_LEN]                     \
+    __attribute__((section(".netc_dma"), aligned(NETC_BUFF_ALIGN)));          \
+  uint64_t                                                             \
+    g_vsi##n##_rx_buff_addr[CONFIG_IMX9_NETC_VSI_RX_RING_LEN];               \
+  uint8_t g_vsi##n##_rx_frame[NETC_RX_FRAME_BUF_SIZE]               \
+    __attribute__((section(".netc_dma"), aligned(NETC_BUFF_ALIGN)));          \
+  uint8_t g_vsi##n##_tx_frame[NETC_TX_FRAME_BUF_SIZE]               \
+    __attribute__((section(".netc_dma"), aligned(NETC_BUFF_ALIGN)));          \
+  netc_rx_bd_t                                                        \
+    g_vsi##n##_rxbd[CONFIG_IMX9_NETC_VSI_RX_RING_LEN]                        \
+    __attribute__((section(".netc_dma"), aligned(NETC_BD_ALIGN)))
 
-uint8_t g_vsi0_msg_buff[NETC_MSG_VSI_BUF_SIZE]
-  __attribute__((section(".netc_dma"),
-                 aligned(NETC_BUFF_ALIGN)));
+/* NETC_VSI_DEFINE_INSTANCE(n, _si, _msgintr, _mac_idx) -- define the BD
+ * ring initializer function, the compile-time config struct, and the
+ * per-instance driver state struct for VSI instance n.
+ * The terminating semicolon is supplied by the call site.
+ */
 
-netc_tx_bd_t g_vsi0_txbd[CONFIG_IMX9_NETC_VSI_TX_RING_LEN]
-  __attribute__((section(".netc_dma"),
-                 aligned(NETC_BD_ALIGN)));
+#define NETC_VSI_DEFINE_INSTANCE(n, _si, _msgintr, _mac_idx)                 \
+  static void imx9_netc_vsi##n##_bdr_init(netc_bdr_config_t    *bdr,         \
+                                           netc_rx_bdr_config_t *rx,          \
+                                           netc_tx_bdr_config_t *tx)          \
+  {                                                                             \
+    uint16_t _i;                                                                \
+    for (_i = 0; _i < CONFIG_IMX9_NETC_VSI_RX_RING_LEN; _i++)               \
+      {                                                                         \
+        g_vsi##n##_rx_buff_addr[_i] =                                         \
+          (uint64_t)(uintptr_t)&g_vsi##n##_rx_buff[_i];                      \
+      }                                                                         \
+    bdr->rxBdrConfig    = rx;                                                   \
+    bdr->txBdrConfig    = tx;                                                   \
+    rx[0].bdArray       = (netc_rx_bd_t *)g_vsi##n##_rxbd;                   \
+    rx[0].len           = CONFIG_IMX9_NETC_VSI_RX_RING_LEN;                  \
+    rx[0].buffAddrArray = (uint64_t *)g_vsi##n##_rx_buff_addr;               \
+    rx[0].buffSize      = NETC_RX_FRAME_BUF_SIZE;                             \
+    rx[0].msixEntryIdx  = NETC_RX_MSIX_ENTRY_IDX;                             \
+    rx[0].extendDescEn  = false;                                                \
+    rx[0].enThresIntr   = true;                                                 \
+    /* coalescing interrupt (RXCOIE) is the working RX interrupt source */     \
+    rx[0].enCoalIntr    = true;                                                 \
+    rx[0].intrThreshold = 1;                                                    \
+    tx[0].bdArray       = (netc_tx_bd_t *)g_vsi##n##_txbd;                   \
+    tx[0].len           = CONFIG_IMX9_NETC_VSI_TX_RING_LEN;                  \
+    tx[0].dirtyArray    = (netc_tx_frame_info_t *)g_vsi##n##_txdirty;        \
+    tx[0].msixEntryIdx  = NETC_TX_MSIX_ENTRY_IDX;                             \
+    tx[0].enIntr        = false;                                                \
+    tx[0].enThresIntr   = true;                                                 \
+  }                                                                             \
+  static const struct imx9_netc_vsi_config_s g_vsi##n##_config =             \
+  {                                                                             \
+    .si_idx            = (_si),                                                 \
+    .msgintr_instance  = (_msgintr),                                            \
+    .mac_default_index = (_mac_idx),                                            \
+    .bdr_init          = imx9_netc_vsi##n##_bdr_init,                         \
+  };                                                                            \
+  static struct imx9_netc_vsi_s g_vsi##n
 
-netc_tx_frame_info_t
-  g_vsi0_txdirty[CONFIG_IMX9_NETC_VSI_TX_RING_LEN];
+/* Instantiate buffers and driver state for each enabled VSI instance */
 
-netc_rx_buf_t g_vsi0_rx_buff[CONFIG_IMX9_NETC_VSI_RX_RING_LEN]
-  __attribute__((section(".netc_dma"),
-                 aligned(NETC_BUFF_ALIGN)));
+#ifdef CONFIG_IMX9_NETC_VSI0
+NETC_VSI_DEFINE_BUFFERS(0);
+NETC_VSI_DEFINE_INSTANCE(0, IMX9_NETC_VSI0_SI_IDX,
+                          IMX9_NETC_VSI0_MSGINTR_INSTANCE, 0);
+#endif /* CONFIG_IMX9_NETC_VSI0 */
 
-uint64_t
-  g_vsi0_rx_buff_addr[CONFIG_IMX9_NETC_VSI_RX_RING_LEN];
-
-uint8_t g_vsi0_rx_frame[NETC_RX_FRAME_BUF_SIZE]
-  __attribute__((section(".netc_dma"),
-                 aligned(NETC_BUFF_ALIGN)));
-
-uint8_t g_vsi0_tx_frame[NETC_TX_FRAME_BUF_SIZE]
-  __attribute__((section(".netc_dma"),
-                 aligned(NETC_BUFF_ALIGN)));
-
-netc_rx_bd_t g_vsi0_rxbd[CONFIG_IMX9_NETC_VSI_RX_RING_LEN]
-  __attribute__((section(".netc_dma"),
-                 aligned(NETC_BD_ALIGN)));
-
-/* BD ring initializer for VSI instance 0 */
-
-static void imx9_netc_vsi0_bdr_init(netc_bdr_config_t    *bdr,
-                                     netc_rx_bdr_config_t *rx,
-                                     netc_tx_bdr_config_t *tx)
-{
-  uint16_t i;
-
-  for (i = 0; i < CONFIG_IMX9_NETC_VSI_RX_RING_LEN; i++)
-    {
-      g_vsi0_rx_buff_addr[i] = (uint64_t)(uintptr_t)&g_vsi0_rx_buff[i];
-    }
-
-  bdr->rxBdrConfig = rx;
-  bdr->txBdrConfig = tx;
-
-  rx[0].bdArray       = (netc_rx_bd_t *)g_vsi0_rxbd;
-  rx[0].len           = CONFIG_IMX9_NETC_VSI_RX_RING_LEN;
-  rx[0].buffAddrArray = (uint64_t *)g_vsi0_rx_buff_addr;
-  rx[0].buffSize      = NETC_RX_FRAME_BUF_SIZE;
-  rx[0].msixEntryIdx  = NETC_RX_MSIX_ENTRY_IDX;
-  rx[0].extendDescEn  = false;
-  rx[0].enThresIntr   = true;
-  rx[0].enCoalIntr    = true;  /* coalescing interrupt (RXCOIE) is the working RX interrupt source on iMX95 */
-  rx[0].intrThreshold = 1;
-
-  tx[0].bdArray      = (netc_tx_bd_t *)g_vsi0_txbd;
-  tx[0].len          = CONFIG_IMX9_NETC_VSI_TX_RING_LEN;
-  tx[0].dirtyArray   = (netc_tx_frame_info_t *)g_vsi0_txdirty;
-  tx[0].msixEntryIdx = NETC_TX_MSIX_ENTRY_IDX;
-  tx[0].enIntr       = false;
-  tx[0].enThresIntr  = true;
-}
-
-/* Per-instance config (compile-time) */
-
-static const struct imx9_netc_vsi_config_s g_vsi0_config =
-{
-  .si_idx           = IMX9_NETC_VSI0_SI_IDX,
-  .msgintr_instance = IMX9_NETC_VSI0_MSGINTR_INSTANCE,
-  .mac_default_index = 0,
-  .bdr_init         = imx9_netc_vsi0_bdr_init,
-};
-
-/* Per-instance state */
-
-static struct imx9_netc_vsi_s g_vsi0;
+#ifdef CONFIG_IMX9_NETC_VSI1
+NETC_VSI_DEFINE_BUFFERS(1);
+NETC_VSI_DEFINE_INSTANCE(1, IMX9_NETC_VSI1_SI_IDX,
+                          IMX9_NETC_VSI1_MSGINTR_INSTANCE, 1);
+#endif /* CONFIG_IMX9_NETC_VSI1 */
 
 /****************************************************************************
  * Private Functions
@@ -691,11 +690,13 @@ static void imx9_netc_vsi_bring_up(struct imx9_netc_vsi_s *priv)
 
   if (imx9_netc_vsi_msg_enable_link_notify(priv) == 0)
     {
-      syslog(LOG_ERR, "VSI ready; carrier up, link-notify enabled\n");
+      syslog(LOG_ERR, "VSI %s: carrier up, link-notify enabled\n",
+             priv->dev.d_ifname);
     }
   else
     {
-      syslog(LOG_ERR, "VSI ready; carrier up (link-notify unavailable)\n");
+      syslog(LOG_ERR, "VSI %s: carrier up (link-notify unavailable)\n",
+             priv->dev.d_ifname);
     }
 }
 
@@ -719,7 +720,7 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
   uint32_t          length;
 
 #ifdef ENETC_VSI_DEBUG_TRX
-  syslog(LOG_ERR, "\n\nVSI RX: entering!\n");
+  syslog(LOG_ERR, "\n\nVSI %s: RX entering\n", priv->dev.d_ifname);
 #endif
 
   /* Check rx frame size; any result other than success or empty requires
@@ -748,15 +749,31 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
     while (--_retry > 0);
   }
 
+  if (rx_result == kStatus_NETC_RxFrameEmpty)
+    {
+      return -ENOBUFS;
+    }
+
+  /* Drop frame immediately if interface is not administratively up.
+   * Do this before EP_ReceiveFrameCopy and any debug syslog prints to
+   * avoid stalling the drain loop with slow serial output during traffic.
+   */
+
+  if ((priv->dev.d_flags & IFF_UP) == 0)
+    {
+      EP_ReceiveFrameCopy(handle, 0, NULL, 0, NULL);
+      return 0;
+    }
+
 #ifdef ENETC_VSI_DEBUG_TRX
   /* Log raw BD fields to diagnose non-regular frames. */
   {
     volatile netc_rx_bd_t *bd =
         &handle->rxBdRing[0].bdBase[handle->rxBdRing[0].index];
     syslog(LOG_ERR,
-           "VSI RX: rx_result=%d length=%u "
+           "VSI %s: RX rx_result=%d length=%u "
            "bd[%u]: isReady=%u isFinal=%u error=%u hr=%u bufLen=%u\n",
-           (int)rx_result, (unsigned)length,
+           priv->dev.d_ifname, (int)rx_result, (unsigned)length,
            (unsigned)handle->rxBdRing[0].index,
            (unsigned)bd->writeback.isReady,
            (unsigned)bd->writeback.isFinal,
@@ -765,11 +782,6 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
            (unsigned)bd->writeback.bufLen);
   }
 #endif
-
-  if (rx_result == kStatus_NETC_RxFrameEmpty)
-    {
-      return -ENOBUFS;
-    }
 
   if (rx_result != kStatus_Success)
     {
@@ -793,15 +805,15 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
           bd->writeback.isFinal = 1U;
         }
 
-      syslog(LOG_ERR, "VSI RX: dropping frame, EP_GetRxFrameSize=%d\n",
-             (int)rx_result);
+      syslog(LOG_ERR, "VSI %s: RX dropping frame, EP_GetRxFrameSize=%d\n",
+             priv->dev.d_ifname, (int)rx_result);
       EP_ReceiveFrameCopy(handle, 0, NULL, 0, NULL);
       return -EIO;
     }
 
   status = EP_ReceiveFrameCopy(handle, 0, priv->rx_frame, length, &attr);
 #ifdef ENETC_VSI_DEBUG_TRX
-  syslog(LOG_ERR, "VSI RX: status=%d len=%u\n", (int)status, (unsigned)length);
+  syslog(LOG_ERR, "VSI %s: RX status=%d len=%u\n", priv->dev.d_ifname, (int)status, (unsigned)length);
 #endif
   if (status == kStatus_NETC_RxFrameEmpty)
     {
@@ -810,8 +822,8 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
 
   if (status != kStatus_Success || length == 0)
     {
-      syslog(LOG_ERR, "VSI RX: error status=%d len=%u\n",
-             (int)status, (unsigned)length);
+      syslog(LOG_ERR, "VSI %s: RX error status=%d len=%u\n",
+             priv->dev.d_ifname, (int)status, (unsigned)length);
       return -EIO;
     }
 
@@ -821,11 +833,11 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
     static uint32_t rx_frames;
     rx_frames++;
     syslog(LOG_ERR,
-           "VSI RX#%u len=%u "
+           "VSI %s: RX#%u len=%u "
            "dst=%02x:%02x:%02x:%02x:%02x:%02x "
            "src=%02x:%02x:%02x:%02x:%02x:%02x "
            "type=%02x%02x\n",
-           rx_frames, (unsigned)length,
+           priv->dev.d_ifname, rx_frames, (unsigned)length,
            f[0],  f[1],  f[2],  f[3],  f[4],  f[5],
            f[6],  f[7],  f[8],  f[9],  f[10], f[11],
            f[12], f[13]);
@@ -842,25 +854,35 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
 #ifdef CONFIG_NET_IPv4
   if (BUF->ether_type == HTONS(ETHTYPE_IP))
     {
+      size_t reply_len;
 #ifdef CONFIG_NET_ARP
       arp_ipin(&priv->dev);
 #endif
       ipv4_input(&priv->dev);
-
-      if (priv->dev.d_len > 0)
+      reply_len = priv->dev.d_len;
+      priv->dev.d_len = 0;
+      net_unlock();
+      if (reply_len > 0)
         {
-          imx9_netc_vsi_transmit(&priv->dev);
+          imx9_netc_vsi_tx(priv, priv->rx_frame, reply_len);
         }
+
+      return 0;
     }
 #ifdef CONFIG_NET_ARP
   else if (BUF->ether_type == HTONS(ETHTYPE_ARP))
     {
+      size_t reply_len;
       arp_input(&priv->dev);
-
-      if (priv->dev.d_len > 0)
+      reply_len = priv->dev.d_len;
+      priv->dev.d_len = 0;
+      net_unlock();
+      if (reply_len > 0)
         {
-          imx9_netc_vsi_transmit(&priv->dev);
+          imx9_netc_vsi_tx(priv, priv->rx_frame, reply_len);
         }
+
+      return 0;
     }
 #endif
 #endif
@@ -868,12 +890,17 @@ int imx9_netc_vsi_rx(struct imx9_netc_vsi_s *priv)
 #ifdef CONFIG_NET_IPv6
   if (BUF->ether_type == HTONS(ETHTYPE_IP6))
     {
+      size_t reply_len;
       ipv6_input(&priv->dev);
-
-      if (priv->dev.d_len > 0)
+      reply_len = priv->dev.d_len;
+      priv->dev.d_len = 0;
+      net_unlock();
+      if (reply_len > 0)
         {
-          imx9_netc_vsi_transmit(&priv->dev);
+          imx9_netc_vsi_tx(priv, priv->rx_frame, reply_len);
         }
+
+      return 0;
     }
 #endif
 
@@ -923,11 +950,11 @@ int imx9_netc_vsi_tx(struct imx9_netc_vsi_s *priv,
     static uint32_t tx_dbg;
     tx_dbg++;
     syslog(LOG_ERR,
-           "VSI TX#%u len=%u "
+           "VSI %s: TX#%u len=%u "
            "dst=%02x:%02x:%02x:%02x:%02x:%02x "
            "src=%02x:%02x:%02x:%02x:%02x:%02x "
            "type=%02x%02x\n",
-           tx_dbg, (unsigned)len,
+           priv->dev.d_ifname, tx_dbg, (unsigned)len,
            ddr_buf[0],  ddr_buf[1],  ddr_buf[2],
            ddr_buf[3],  ddr_buf[4],  ddr_buf[5],
            ddr_buf[6],  ddr_buf[7],  ddr_buf[8],
@@ -997,16 +1024,21 @@ static void imx9_netc_vsi_msgintr_cb(int instance, uint8_t channel,
     {
 #ifdef ENETC_VSI_DEBUG_INTR
       rx_count++;
-      syslog(LOG_ERR, "VSI MSGINTR: RX fired count=%u pending=0x%08x\n",
-             (unsigned)rx_count, (unsigned)pending);
+      syslog(LOG_ERR, "VSI %s: MSGINTR RX fired count=%u pending=0x%08x\n",
+             priv->dev.d_ifname, (unsigned)rx_count, (unsigned)pending);
 #endif
-      /* Disable RX threshold interrupt to prevent ISR flood.
-       * The SI asserts MSI-X while SIRXIDR0 is set AND RBIER.RXTIE=1.
-       * Clearing RBIER.RXTIE stops re-assertion without losing pending
-       * frame notifications.  The service thread re-enables RXTIE after
-       * draining the ring (NAPI-style: disable in ISR, re-arm after drain).
+      /* When the interface is administratively down, just clear the
+       * interrupt flag and return without waking the service thread.
+       * This prevents the thread from spin-draining (and starving the
+       * UART/console) while IFF_UP is not set.
        */
-      EP_CleanRxIntrFlags(&priv->handle, NETC_VSI_RX_RING_COUNT);
+      if ((priv->dev.d_flags & IFF_UP) == 0)
+        {
+          EP_CleanRxIntrFlags(&priv->handle, 1U);
+          return;
+        }
+
+      EP_CleanRxIntrFlags(&priv->handle, 1U);
       nxsem_post(&priv->rx_sem);
     }
 
@@ -1014,8 +1046,8 @@ static void imx9_netc_vsi_msgintr_cb(int instance, uint8_t channel,
     {
 #ifdef ENETC_VSI_DEBUG_INTR
       msg_count++;
-      syslog(LOG_ERR, "VSI MSGINTR: MSG fired count=%u pending=0x%08x\n",
-             (unsigned)msg_count, (unsigned)pending);
+      syslog(LOG_ERR, "VSI %s: MSGINTR MSG fired count=%u pending=0x%08x\n",
+             priv->dev.d_ifname, (unsigned)msg_count, (unsigned)pending);
 #endif
       /* If si_bringup has not yet completed, the rptun semaphore gates
        * the service thread; this MSG interrupt is informational only.
@@ -1059,19 +1091,27 @@ void imx9_netc_vsi_msg_isr(struct imx9_netc_vsi_s *priv)
          * program_psi itself; a stale interrupt here would cause a
          * double-message that corrupts the PSI state machine.
          */
-        syslog(LOG_ERR, "imx9_netc_vsi_msg_poll_link: LINK_UP!\n");
+        syslog(LOG_ERR, "VSI %s: link UP\n", priv->dev.d_ifname);
         priv->link_notify = true;
         priv->si_ready = true;
         break;
 
       case IMX9_NETC_MSG_LINK_DOWN:
-      syslog(LOG_ERR, "imx9_netc_vsi_msg_poll_link: LINK_DOWN!\n");
+        syslog(LOG_ERR, "VSI %s: link DOWN\n", priv->dev.d_ifname);
         priv->si_ready = false;
-        netdev_carrier_off(&priv->dev);
+        /* Do not call netdev_carrier_off() from ISR context.
+         * It triggers devif_dev_event(NETDEV_DOWN) which invokes TCP
+         * close callbacks that may try to acquire net_lock, causing a
+         * deadlock if net_lock is already held by another task (e.g. NSH).
+         * Set a flag and let the service thread call netdev_carrier_off
+         * from thread context instead.
+         */
+        priv->link_down_pending = true;
+        nxsem_post(&priv->rx_sem);
         break;
 
       default:
-        syslog(LOG_ERR, "imx9_netc_vsi_msg_poll_link: unknown msg !!!\n");
+        syslog(LOG_ERR, "VSI %s: unknown link msg\n", priv->dev.d_ifname);
         break;
     }
 }
@@ -1119,23 +1159,23 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
 
       if (0 == nxsem_tickwait(&priv->rx_sem, MSEC2TICK(CONFIG_IMX9_NETC_VSI_READY_POLL_MS)))
       {
-        work = 0;
-        while (imx9_netc_vsi_rx(priv) == 0)
+        /* Check needs_bringup before draining: if ifdown was called, the
+         * SI BD rings and MSI-X table are in an undefined state; skip rx
+         * drain and let the bringup path below restore everything.
+         */
+        if (!priv->needs_bringup && priv->si_ready)
           {
-            if (++work == CONFIG_IMX9_NETC_VSI_RX_BUDGET)
+            work = 0;
+            while (imx9_netc_vsi_rx(priv) == 0)
               {
-                work = 0;
-                sched_yield();
+                if (++work == CONFIG_IMX9_NETC_VSI_RX_BUDGET)
+                  {
+                    work = 0;
+                    sched_yield();
+                  }
               }
-          }
 
-#if 0 /* Not needed, kept for debugging/experimental purpouse. */
-        /* Ring drained: re-arm the RX threshold interrupt.
-         * The ISR callback cleared SIRXIDR0 (W1C) and disabled RBIER.RXTIE
-         * to prevent flooding.  Re-enable RXTIE here so the next frame
-         * that arrives fires MSI-X -> MSIR -> ISR again (NAPI re-arm). */
-        priv->handle.hw.si->BDR[0].RBIER = ENETC_SI_RBIER_RXTIE(1U);
-#endif
+          }
       }
 
       /* Drain any extra posts the ISR accumulated while we were working. */
@@ -1153,7 +1193,8 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
           priv->si_ready = false;
           nxrmutex_unlock(&priv->msg_lock);
           netdev_carrier_off(&priv->dev);
-          ninfo("VSI down; awaiting SR-IOV re-enable\n");
+          syslog(LOG_ERR, "VSI %s: link DOWN (SR-IOV lost)\n",
+                 priv->dev.d_ifname);
           up = false;
         }
       else if (!up && ready)
@@ -1163,9 +1204,50 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
           priv->si_ready = true;
         }
 
+      /* Handle ifdown/ifup cycle: si_bringup must be re-run because
+       * ifdown masked the MSI-X table and stopped the SI.  The 'up'
+       * flag stays true (no SR-IOV loss), so the !up&&ready path above
+       * does not fire.  needs_bringup fills this gap.
+       */
+      if (priv->needs_bringup && priv->needs_ifup)
+        {
+          priv->needs_bringup = false;
+          priv->needs_ifup    = false;
+          syslog(LOG_ERR, "VSI %s: re-bringup after ifdown/ifup\n",
+                 priv->dev.d_ifname);
+          imx9_netc_vsi_bring_up(priv);
+
+          /* Drain immediately after re-bringup.  Frames may have arrived
+           * after RBIER was armed but before the thread returned to
+           * tickwait; the nxsem_trywait loop above consumed those ISR
+           * posts before bring_up ran, leaving frames stranded in the
+           * ring.  An explicit poll here catches them.
+           */
+          if (priv->si_ready)
+            {
+              work = 0;
+              while (imx9_netc_vsi_rx(priv) == 0)
+                {
+                  if (++work == CONFIG_IMX9_NETC_VSI_RX_BUDGET)
+                    {
+                      work = 0;
+                      sched_yield();
+                    }
+                }
+            }
+        }
+
       if (!up)
         {
           continue;
+        }
+
+      if (priv->link_down_pending)
+        {
+          priv->link_down_pending = false;
+          netdev_carrier_off(&priv->dev);
+          syslog(LOG_ERR, "VSI %s: link DOWN (deferred from ISR)\n",
+                 priv->dev.d_ifname);
         }
 
       if (priv->link_notify)
@@ -1173,7 +1255,8 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
           priv->link_notify = false;
           imx9_netc_vsi_program_psi(priv);
           netdev_carrier_on(&priv->dev);
-          ninfo("VSI link-up; PSI reprogrammed\n");
+          syslog(LOG_ERR, "VSI %s: link UP; PSI reprogrammed\n",
+                 priv->dev.d_ifname);
         }
 
       if (!priv->si_ready)
@@ -1244,22 +1327,22 @@ static int imx9_netc_vsi_transmit(struct net_driver_s *dev)
 
   if (!priv->si_ready)
     {
-      syslog(LOG_ERR, "VSI TX: si_ready=false, dropping\n");
+      syslog(LOG_ERR, "VSI %s: TX si_ready=false, dropping\n", priv->dev.d_ifname);
       return -ENETDOWN;
     }
 
   if (!imx9_netc_vsi_vf_ready(priv))
     {
       nxsem_post(&priv->rx_sem);
-      syslog(LOG_ERR, "VSI TX: vf not ready, dropping\n");
+      syslog(LOG_ERR, "VSI %s: TX vf not ready, dropping\n", priv->dev.d_ifname);
       return -ENETDOWN;
     }
 
   ret = imx9_netc_vsi_tx(priv, dev->d_buf, dev->d_len);
 #ifdef ENETC_VSI_DEBUG_TRX
   tx_frames++;
-  syslog(LOG_ERR, "VSI TX: len=%u ret=%d total=%u\n",
-         (unsigned)dev->d_len, ret, tx_frames);
+  syslog(LOG_ERR, "VSI %s: TX len=%u ret=%d total=%u\n",
+         priv->dev.d_ifname, (unsigned)dev->d_len, ret, tx_frames);
 #endif
   return ret;
 }
@@ -1269,7 +1352,7 @@ static int imx9_netc_vsi_txavail(struct net_driver_s *dev)
   struct imx9_netc_vsi_s *priv = (struct imx9_netc_vsi_s *)dev;
 
 #ifdef ENETC_VSI_DEBUG_TRX
-  syslog(LOG_ERR, "VSI txavail: entered !!!\n");
+  syslog(LOG_ERR, "VSI %s: txavail entered\n", priv->dev.d_ifname);
 #endif
   if (!priv->si_ready)
     {
@@ -1325,20 +1408,25 @@ static int imx9_netc_vsi_ifup(struct net_driver_s *dev)
   const struct imx9_netc_vsi_config_s *cfg = priv->config;
 
   /* Re-register MSGINTR so MSI-X interrupts (RX, TX, MSG) can arrive.
+   * MSI-X entries are NOT unmasked here: the SI address space (msixTable)
+   * may not be accessible yet at boot (TRDC firewall is closed until the
+   * PSI/A55 enables SR-IOV).  The service thread calls si_bringup() after
+   * confirming the firewall is open, and si_bringup() programs the entire
+   * MSI-X table with control=0 (unmasked), which is the authoritative
+   * unmask point.
    * ifdown() called imx9_msgintr_deinit() which disabled the IRQSTEER
    * channel and detached the ISR; re-init restores both.
    */
   imx9_msgintr_init(cfg->msgintr_instance,
                     imx9_netc_vsi_msgintr_cb, priv);
 
-  /* Wake the service thread so it runs bring_up() again.
-   * The thread is parked in nxsem_tickwait on rx_sem after ifdown.
-   * Posting rx_sem causes it to loop, see !up && ready, and call
-   * imx9_netc_vsi_bring_up() which re-initializes the SI BD rings
-   * and re-programs the PSI.
-   * Note: vf_confirmed is already true (SI firewall still open), so
-   * wait_ready() returns immediately on the second bring_up.
+  /* Signal the service thread that ifup() has completed.  The thread
+   * checks for needs_bringup && needs_ifup together so it only re-runs
+   * si_bringup after BOTH ifdown and ifup have been called -- preventing
+   * a race where needs_bringup is seen while IFF_UP is still set during
+   * the ifdown call (before NuttX clears IFF_UP).
    */
+  priv->needs_ifup = true;
   nxsem_post(&priv->rx_sem);
 
   return OK;
@@ -1347,10 +1435,34 @@ static int imx9_netc_vsi_ifup(struct net_driver_s *dev)
 static int imx9_netc_vsi_ifdown(struct net_driver_s *dev)
 {
   struct imx9_netc_vsi_s *priv = (struct imx9_netc_vsi_s *)dev;
+  uint32_t *tbl = (uint32_t *)(uintptr_t)priv->handle.hw.msixTable;
+
+  /* Mask all MSI-X table entries before deiniting MSGINTR.
+   * After deinit the MSGINTR callback is NULL and the NVIC line may still
+   * be enabled (shared with VSI0).  If a packet arrives and triggers a
+   * write to MSIIR, the IRQ asserts and the ISR finds no callback -- but
+   * MSIR is never cleared, so the NVIC keeps re-entering the ISR in an
+   * infinite loop that starves all tasks (including NSH).
+   * Setting the MSI-X entry control word bit 0 (Mask Bit) prevents the
+   * SI from writing to MSIIR while the interface is down.
+   */
+  if (tbl != NULL)
+    {
+      tbl[NETC_TX_MSIX_ENTRY_IDX  * 4u + 3u] = 1u; /* masked */
+      tbl[NETC_RX_MSIX_ENTRY_IDX  * 4u + 3u] = 1u;
+      tbl[NETC_MSG_MSIX_ENTRY_IDX * 4u + 3u] = 1u;
+      __asm__ volatile("dsb" ::: "memory");
+    }
 
   imx9_msgintr_deinit(priv->config->msgintr_instance);
   priv->si_ready = false;
-  netdev_carrier_off(dev);
+  /* Signal the service thread that si_bringup() must be re-run.
+   * needs_ifup is cleared here and set by ifup() so that the service
+   * thread only runs bringup when BOTH flags are set, avoiding a race
+   * where needs_bringup is seen while IFF_UP is still set during ifdown.
+   */
+  priv->needs_ifup   = false;
+  priv->needs_bringup = true;
   return OK;
 }
 
@@ -1422,41 +1534,56 @@ static int imx9_netc_vsi_ioctl(struct net_driver_s *dev, int cmd,
  ****************************************************************************/
 
 /****************************************************************************
- * Name: imx9_netc_vsi_initialize
+ * Name: imx9_netc_vsi_do_initialize
  *
  * Description:
- *   Initialize and register the ENETC VSI Ethernet driver.
- *   Called once from the board bringup code (imx95_bringup.c).
+ *   Common initialization body shared by all VSI instances.
+ *   Wires up the driver state, registers the netdev, and spawns the
+ *   service kthread.  The caller supplies the instance-specific state,
+ *   config, and DMA buffer pointers.
+ *
+ * Parameters:
+ *   priv      - per-instance driver state (pre-allocated, will be zeroed)
+ *   cfg       - compile-time config (si_idx, msgintr_instance, bdr_init)
+ *   tx_buff   - pointer to the instance TX buffer array in .netc_dma
+ *   msg_buff  - pointer to the instance VSI->PSI message buffer
+ *   rx_frame  - pointer to the instance RX reassembly buffer
+ *   mac_override - optional hard-coded MAC from board.h (NULL = use default)
  *
  * Returned Value:
  *   OK on success, negated errno on failure.
  *
  ****************************************************************************/
 
-int imx9_netc_vsi_initialize(void)
+static int imx9_netc_vsi_do_initialize(
+    struct imx9_netc_vsi_s              *priv,
+    const struct imx9_netc_vsi_config_s *cfg,
+    uint8_t (*tx_buff)[NETC_TX_FRAME_BUF_SIZE],
+    uint8_t                             *msg_buff,
+    uint8_t                             *rx_frame,
+    uint8_t                             *tx_frame,
+    const uint8_t                       *mac_override)
 {
-  struct imx9_netc_vsi_s    *priv   = &g_vsi0;
-  const struct imx9_netc_vsi_config_s *cfg = &g_vsi0_config;
-  ep_handle_t               *handle = &priv->handle;
-  char                       arg1[32];
-  char                      *argv[2];
-  int                        ret;
+  ep_handle_t *handle = &priv->handle;
+  char         arg1[32];
+  char        *argv[2];
+  int          ret;
 
   memset(priv, 0, sizeof(*priv));
   priv->config    = cfg;
-  priv->tx_buff   = (uint8_t (*)[NETC_TX_FRAME_BUF_SIZE])g_vsi0_tx_buff;
-  priv->msg_buff  = (uint8_t *)g_vsi0_msg_buff;
-  priv->rx_frame  = (uint8_t *)g_vsi0_rx_frame;
-  priv->tx_frame  = (uint8_t *)g_vsi0_tx_frame;
+  priv->tx_buff   = (uint8_t (*)[NETC_TX_FRAME_BUF_SIZE])tx_buff;
+  priv->msg_buff  = (uint8_t *)msg_buff;
+  priv->rx_frame  = (uint8_t *)rx_frame;
+  priv->tx_frame  = (uint8_t *)tx_frame;
 
   NETC_SocGetBaseResource(&handle->hw, (netc_hw_si_idx_t)cfg->si_idx);
 
   /* Fill SDK handle cfg (no register access here) */
 
-  handle->cfg.si             = (netc_hw_si_idx_t)cfg->si_idx;
-  handle->cfg.rxRingUse      = 1;
-  handle->cfg.txRingUse      = 1;
-  handle->cfg.rxBdrGroupNum  = 0;
+  handle->cfg.si              = (netc_hw_si_idx_t)cfg->si_idx;
+  handle->cfg.rxRingUse       = 1;
+  handle->cfg.txRingUse       = 1;
+  handle->cfg.rxBdrGroupNum   = 0;
   handle->cfg.ringPerBdrGroup = 1;
   handle->cfg.rxCacheMaintain = false;
   handle->cfg.txCacheMaintain = false;
@@ -1465,16 +1592,17 @@ int imx9_netc_vsi_initialize(void)
   handle->cfg.userData        = priv;
   handle->cfg.reclaimCallback = NULL;
 
-  /* Determine MAC address */
+  /* Determine MAC address: use board override when provided, else derive
+   * a deterministic fallback from the instance index. */
 
-#ifdef IMX9_NETC_VSI0_MAC
-  {
-    static const uint8_t board_mac[] = IMX9_NETC_VSI0_MAC;
-    memcpy(priv->mac_addr, board_mac, IFHWADDRLEN);
-  }
-#else
-  imx9_netc_default_mac(priv->mac_addr, cfg->mac_default_index);
-#endif
+  if (mac_override != NULL)
+    {
+      memcpy(priv->mac_addr, mac_override, IFHWADDRLEN);
+    }
+  else
+    {
+      imx9_netc_default_mac(priv->mac_addr, cfg->mac_default_index);
+    }
 
   priv->si_ready    = false;
   priv->link_notify = false;
@@ -1486,13 +1614,13 @@ int imx9_netc_vsi_initialize(void)
   /* Register the MSGINTR callback early.  The PSI sends a MSG interrupt
    * only after it has opened the NETC TRDC/XRDC firewall.  MSGINTR lives
    * at 0x4B230000 and is NOT firewalled, so this call is safe even when
-   * the VSI SI register space (0x4CD30000) is still locked.
+   * the VSI SI register space is still locked.
    */
 
   imx9_msgintr_init(cfg->msgintr_instance,
                     imx9_netc_vsi_msgintr_cb, priv);
 
-  /* Configure the netdev */
+  /* Configure the netdev ops */
 
   priv->dev.d_ifup    = imx9_netc_vsi_ifup;
   priv->dev.d_ifdown  = imx9_netc_vsi_ifdown;
@@ -1512,6 +1640,7 @@ int imx9_netc_vsi_initialize(void)
 #endif
 
   /* Register with the NuttX network layer */
+
   ret = netdev_register(&priv->dev, NET_LL_ETHERNET);
   if (ret < 0)
     {
@@ -1520,12 +1649,13 @@ int imx9_netc_vsi_initialize(void)
       return ret;
     }
 
-  /* Spawn the service thread that will drive the SI */
+  /* Spawn the service kthread that will drive the SI */
+
   snprintf(arg1, sizeof(arg1), "%p", priv);
   argv[0] = arg1;
   argv[1] = NULL;
 
-  priv->rx_thread_pid = kthread_create("netc_vsi",
+  priv->rx_thread_pid = kthread_create(priv->dev.d_ifname,
                                        CONFIG_IMX9_NETC_VSI_THREAD_PRIORITY,
                                        CONFIG_IMX9_NETC_VSI_THREAD_STACKSIZE,
                                        imx9_netc_vsi_thread,
@@ -1537,11 +1667,86 @@ int imx9_netc_vsi_initialize(void)
       return (int)priv->rx_thread_pid;
     }
 
-  ninfo("ENETC VSI0 registered (SI idx 0x%04x, MAC %02x:%02x:%02x:%02x:%02x:%02x)\n",
+  ninfo("ENETC VSI%u registered (SI idx 0x%04x, "
+        "MAC %02x:%02x:%02x:%02x:%02x:%02x)\n",
+        (unsigned)cfg->mac_default_index,
         cfg->si_idx,
         priv->mac_addr[0], priv->mac_addr[1], priv->mac_addr[2],
         priv->mac_addr[3], priv->mac_addr[4], priv->mac_addr[5]);
 
   return OK;
+}
+
+/****************************************************************************
+ * Name: imx9_netc_vsi_initialize
+ *
+ * Description:
+ *   Initialize and register the ENETC VSI Ethernet driver for the given
+ *   instance index.  Called from the board bringup code (imx95_bringup.c).
+ *
+ * Parameters:
+ *   instance - VSI instance to initialize (0, 1, ...)
+ *
+ * Returned Value:
+ *   OK on success, negated errno on failure.
+ *
+ ****************************************************************************/
+
+int imx9_netc_vsi_initialize(int instance)
+{
+  switch (instance)
+    {
+#ifdef CONFIG_IMX9_NETC_VSI0
+      case 0:
+        {
+#ifdef IMX9_NETC_VSI0_MAC
+          static const uint8_t mac0[] = IMX9_NETC_VSI0_MAC;
+          return imx9_netc_vsi_do_initialize(
+              &g_vsi0, &g_vsi0_config,
+              (uint8_t (*)[CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE])g_vsi0_tx_buff,
+              (uint8_t *)g_vsi0_msg_buff,
+              (uint8_t *)g_vsi0_rx_frame,
+	      (uint8_t *)g_vsi0_tx_frame,
+              mac0);
+#else
+          return imx9_netc_vsi_do_initialize(
+              &g_vsi0, &g_vsi0_config,
+              (uint8_t (*)[CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE])g_vsi0_tx_buff,
+              (uint8_t *)g_vsi0_msg_buff,
+              (uint8_t *)g_vsi0_rx_frame,
+	      (uint8_t *)g_vsi0_tx_frame,
+              NULL);
+#endif
+        }
+#endif /* CONFIG_IMX9_NETC_VSI0 */
+
+#ifdef CONFIG_IMX9_NETC_VSI1
+      case 1:
+        {
+#ifdef IMX9_NETC_VSI1_MAC
+          static const uint8_t mac1[] = IMX9_NETC_VSI1_MAC;
+          return imx9_netc_vsi_do_initialize(
+              &g_vsi1, &g_vsi1_config,
+              (uint8_t (*)[CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE])g_vsi1_tx_buff,
+              (uint8_t *)g_vsi1_msg_buff,
+              (uint8_t *)g_vsi1_rx_frame,
+	      (uint8_t *)g_vsi1_tx_frame,
+              mac1);
+#else
+          return imx9_netc_vsi_do_initialize(
+              &g_vsi1, &g_vsi1_config,
+              (uint8_t (*)[CONFIG_IMX9_NETC_VSI_TX_BUF_SIZE])g_vsi1_tx_buff,
+              (uint8_t *)g_vsi1_msg_buff,
+              (uint8_t *)g_vsi1_rx_frame,
+	      (uint8_t *)g_vsi1_tx_frame,
+              NULL);
+#endif
+        }
+#endif /* CONFIG_IMX9_NETC_VSI1 */
+
+      default:
+        nerr("Unknown VSI instance %d\n", instance);
+        return -EINVAL;
+    }
 }
 

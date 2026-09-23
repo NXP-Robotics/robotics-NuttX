@@ -178,47 +178,57 @@ static struct imx9_msgintr_inst_s g_msgintr_inst[IMX9_MSGINTR_NUM_INSTANCES] =
 
 static int imx9_msgintr_isr(int irq, void *context, void *arg)
 {
-  struct imx9_msgintr_inst_s *inst = (struct imx9_msgintr_inst_s *)arg;
-  struct imx95_msgintr_regs_s *regs =
-    (struct imx95_msgintr_regs_s *)inst->base;
-  uint8_t  ch;
-  uint32_t pending;
-  uint32_t sysirq;
-  uint32_t stat_bit;
+  int i;
 
-  /* Determine instance from base address since both use the same NVIC IRQ. */
-
-  int instance = (inst->base == IMX9_MSGINTR1_BASE) ? 1 : 2;
-
-  sysirq   = (instance == IMX9_MSGINTR_INSTANCE1) ?
-              IMX9_MSGINTR1_SYSIRQ : IMX9_MSGINTR2_SYSIRQ;
-  stat_bit = 1u << IRQSTEER_REG_BIT(sysirq);
-
-  /* Guard: IMX9_IRQ_IRQSTEER_0 (master0) is a level signal that stays
-   * asserted while ANY enabled input in master0 is active.  If another
-   * peripheral in master0 caused this interrupt and our input is not
-   * pending, return immediately.
+  /* Both MSGINTR1 and MSGINTR2 share IMX9_IRQ_IRQSTEER_0.
+   * irq_attach() stores only one handler+arg per NVIC line, so the arg
+   * passed here is whichever instance registered last -- it cannot be
+   * used to identify which hardware peripheral fired.  Instead, iterate
+   * over every registered instance and service any that has a pending
+   * IRQSTEER status bit.
    */
 
-  if ((getreg32(IRQSTEER_STATUS_ADDR(sysirq)) & stat_bit) == 0u)
+  for (i = IMX9_MSGINTR_INSTANCE1; i <= IMX9_MSGINTR_INSTANCE2; i++)
     {
-      return OK;
-    }
+      struct imx9_msgintr_inst_s  *inst;
+      struct imx95_msgintr_regs_s *regs;
+      uint32_t sysirq;
+      uint32_t stat_bit;
+      uint8_t  ch;
+      uint32_t pending;
 
-  for (ch = 0; ch < IMX9_MSGINTR_CHANNEL_NUM; ch++)
-    {
-      pending = regs->msi[ch].msir;  /* read clears the pending bits */
+      inst = &g_msgintr_inst[i];
 
-      if (pending != 0u)
+      if (inst->callback == NULL)
         {
-#ifdef ENETC_VSI_DEBUG_INTR
-          syslog(LOG_ERR,
-                 "MSGINTR ISR: irq=%d inst=%d ch=%u pending=0x%08x\n",
-                 irq, instance, (unsigned)ch, (unsigned)pending);
-#endif
-          if (inst->callback != NULL)
+          continue;  /* instance not yet initialized */
+        }
+
+      sysirq   = (i == IMX9_MSGINTR_INSTANCE1) ?
+                  IMX9_MSGINTR1_SYSIRQ : IMX9_MSGINTR2_SYSIRQ;
+      stat_bit = 1u << IRQSTEER_REG_BIT(sysirq);
+
+      /* Skip if this instance's IRQSTEER input is not pending. */
+
+      if ((getreg32(IRQSTEER_STATUS_ADDR(sysirq)) & stat_bit) == 0u)
+        {
+          continue;
+        }
+
+      regs = (struct imx95_msgintr_regs_s *)inst->base;
+
+      for (ch = 0; ch < IMX9_MSGINTR_CHANNEL_NUM; ch++)
+        {
+          pending = regs->msi[ch].msir;  /* read clears the pending bits */
+
+          if (pending != 0u)
             {
-              inst->callback(instance, ch, pending, inst->arg);
+#ifdef ENETC_VSI_DEBUG_INTR
+              syslog(LOG_ERR,
+                     "MSGINTR ISR: irq=%d inst=%d ch=%u pending=0x%08x\n",
+                     irq, i, (unsigned)ch, (unsigned)pending);
+#endif
+              inst->callback(i, ch, pending, inst->arg);
             }
         }
     }
@@ -340,17 +350,42 @@ void imx9_msgintr_deinit(int instance)
   inst = &g_msgintr_inst[instance];
   regs = (struct imx95_msgintr_regs_s *)inst->base;
 
-  up_disable_irq(inst->irq);
-  irq_detach(inst->irq);
+  /* Clear the callback first so the ISR loop skips this instance
+   * immediately, even before the IRQSTEER channel mask is cleared. */
 
   inst->callback = NULL;
   inst->arg      = NULL;
 
-  /* Drain any stale pending bits so no spurious interrupt fires on re-init */
+  /* Drain any stale pending bits so no spurious interrupt fires on re-init. */
+
   for (ch = 0; ch < IMX9_MSGINTR_CHANNEL_NUM; ch++)
     {
       (void)regs->msi[ch].msir;
     }
+
+  /* Only disable the shared NVIC line if no other instance is still active.
+   * Both MSGINTR1 and MSGINTR2 share IMX9_IRQ_IRQSTEER_0; disabling it while
+   * the other instance has a registered callback would suppress its interrupts.
+   */
+
+  {
+    bool other_active = false;
+    int  other;
+    for (other = IMX9_MSGINTR_INSTANCE1; other <= IMX9_MSGINTR_INSTANCE2; other++)
+      {
+        if (other != instance && g_msgintr_inst[other].callback != NULL)
+          {
+            other_active = true;
+            break;
+          }
+      }
+
+    if (!other_active)
+      {
+        up_disable_irq(inst->irq);
+        irq_detach(inst->irq);
+      }
+  }
 }
 
 /****************************************************************************

@@ -1088,6 +1088,22 @@ config IMX9_NETC_VSI
 
 if IMX9_NETC_VSI
 
+config IMX9_NETC_VSI0
+	bool "Enable VSI instance 0"
+	default y
+	---help---
+		Enable the first NETC VSI instance (SI index defined by
+		IMX9_NETC_VSI0_SI_IDX in board.h). This is the default instance
+		and corresponds to the first SR-IOV VF exposed by the PSI.
+
+config IMX9_NETC_VSI1
+	bool "Enable VSI instance 1"
+	default n
+	---help---
+		Enable a second NETC VSI instance (SI index defined by
+		IMX9_NETC_VSI1_SI_IDX in board.h). Requires the PSI to expose
+		a second SR-IOV VF and a separate MSGINTR instance.
+
 config IMX9_NETC_VSI_TX_RING_LEN
 	int "TX BD ring length (number of descriptors)"
 	default 8
