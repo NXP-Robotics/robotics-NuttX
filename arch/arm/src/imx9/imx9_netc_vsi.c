@@ -98,7 +98,7 @@
  */
 
 #ifndef CONFIG_IMX9_NETC_VSI_RPTUN_READY_DELAY_MS
-#  define CONFIG_IMX9_NETC_VSI_RPTUN_READY_DELAY_MS  10000
+#  define CONFIG_IMX9_NETC_VSI_RPTUN_READY_DELAY_MS  20000
 #endif
 
 /* Maximum RX frames processed per wakeup before yielding */
