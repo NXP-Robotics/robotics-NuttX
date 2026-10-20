@@ -974,7 +974,7 @@ config IMX9_LPSPI_DMATHRESHOLD
 
 config IMX9_LPSPI_HWPCS
 	bool "Use native hardware peripheral chip selects instead of GPIO pins"
-	default n
+	default y
 
 config IMX9_LPSPI1_DMA
 	bool "LPSPI1 DMA"
