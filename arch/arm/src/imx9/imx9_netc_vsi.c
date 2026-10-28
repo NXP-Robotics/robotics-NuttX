@@ -70,6 +70,10 @@
 
 #include <arch/board/board.h>
 
+#define ENETC_VSI_DEBUG_TRX
+#define ENETC_VSI_DEBUG_INTR
+
+
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
@@ -922,6 +926,8 @@ int imx9_netc_vsi_tx(struct imx9_netc_vsi_s *priv,
 {
   ep_handle_t       *handle  = &priv->handle;
   uint8_t           *ddr_buf;
+  status_t           status;
+  unsigned int       retry;
   netc_buffer_struct_t pkt;
   netc_frame_struct_t frame  =
     {
@@ -929,10 +935,19 @@ int imx9_netc_vsi_tx(struct imx9_netc_vsi_s *priv,
       .length    = 1,
     };
 
+  /* Bounded retry when the TX BD ring has no idle descriptor left.
+   * NETC_TX_SEND_RETRIES short waits of NETC_TX_SEND_RETRY_US microseconds
+   * give the NETC DMA time to advance its TX consumer index so BDs can be
+   * reclaimed. */
+
+  const unsigned int NETC_TX_SEND_RETRIES  = 8u;
+  const unsigned int NETC_TX_SEND_RETRY_US = 100u;
+
   if (len > NETC_TX_FRAME_BUF_SIZE)
     {
       return -EMSGSIZE;
     }
+
 
   /* The source buffer may be in M7 SRAM (not accessible by NETC DMA).
    * Always copy the frame into a DDR (.netc_dma) TX buffer first so the
@@ -978,13 +993,62 @@ int imx9_netc_vsi_tx(struct imx9_netc_vsi_s *priv,
 
   __asm__ volatile ("dsb" ::: "memory");
 
-  if (EP_SendFrame(handle, 0, &frame, NULL, NULL) != kStatus_Success)
+  /* EP_SendFrame returns kStatus_Busy when there is no idle TX BD left.
+   * The hardware TX consumer index advances asynchronously as the NETC
+   * DMA drains the ring, so re-run reclaim and retry a bounded number of
+   * times to let in-flight frames complete and free BDs.  Only report
+   * back-pressure if the ring is still full after the retries. */
+
+  status = EP_SendFrame(handle, 0, &frame, NULL, NULL);
+
+  for (retry = 0; status == kStatus_Busy && retry < NETC_TX_SEND_RETRIES;
+       retry++)
+    {
+      up_udelay(NETC_TX_SEND_RETRY_US);
+
+      EP_ReclaimTxDescriptor(handle, 0);
+      __asm__ volatile ("dsb" ::: "memory");
+
+      status = EP_SendFrame(handle, 0, &frame, NULL, NULL);
+    }
+
+#ifdef ENETC_VSI_DEBUG_TRX
+  /* TX ring diagnostic.  Compare VSI0 (ENETC2 / switch, works) against
+   * VSI1 (ENETC0 / Realtek, stalls):
+   *   - producerIndex climbing while TBCIR (consumer) stays frozen means
+   *     the ENETC VF TX egress is not completing (PF/SR-IOV VF-TX enable
+   *     or port TX readiness issue), NOT a ring-software bug.
+   *   - TBCIR advancing but completion IRQ never firing points at the
+   *     MSGINTR-instance / MSI-X entry aliasing between the two VSIs. */
+
+  {
+    uint16_t tbcir = NETC_SIGetTxConsumer(handle->hw.si, 0);
+    syslog(LOG_ERR,
+           "VSI %s: TX ring prod=%u clean=%u tbcir=%u retry=%u status=%d\n",
+           priv->dev.d_ifname,
+           (unsigned)handle->txBdRing[0].producerIndex,
+           (unsigned)handle->txBdRing[0].cleanIndex,
+           (unsigned)tbcir, retry, (int)status);
+  }
+#endif
+
+  if (status == kStatus_Busy)
+    {
+      /* Ring still full: tell the stack to retry later instead of
+       * treating this as a hard error. */
+
+      return -EAGAIN;
+    }
+
+
+  if (status != kStatus_Success)
     {
       return -EIO;
     }
 
   return 0;
 }
+
 
 /****************************************************************************
  * Name: imx9_netc_vsi_msgintr_cb
