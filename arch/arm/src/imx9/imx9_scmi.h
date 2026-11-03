@@ -393,4 +393,73 @@ int32_t imx9_scmi_bbmgprget(uint32_t channel, uint32_t index,
 #if defined(__cplusplus)
 }
 #endif
+/****************************************************************************
+ * Name: imx9_scmi_notify_register
+ *
+ * Description:
+ *   Register the callback for SCMI notifications from the System Manager
+ *   and enable their reception. The callback is called from interrupt
+ *   context with the protocol and message ID of the notification and must
+ *   not block, so it must not call the SCMI request functions (they lock
+ *   the A2P channel); defer such work, e.g. with work_queue(). It may read
+ *   the message with the matching event function
+ *   (e.g. imx9_scmi_lmmevent()); this is only valid inside the callback.
+ *   The channel is handed back to the System Manager when it returns.
+ *   Must be called after the OS is initialized.
+ *
+ * Input Parameters:
+ *   cb  - Notification callback
+ *   arg - Argument passed to the callback
+ *
+ * Returned Value:
+ *   OK on success, -EBUSY if a callback is already registered, a negated
+ *   errno value on other failures.
+ *
+ ****************************************************************************/
+
+int32_t imx9_scmi_notify_register(imx9_scmi_notify_cb_t cb, void *arg);
+
+/****************************************************************************
+ * Name: imx9_scmi_lmmnotify
+ *
+ * Description:
+ *   Subscribe to boot/shutdown notifications of a logical machine via the
+ *   SCMI LMM protocol. Register the notification callback first, the
+ *   System Manager may send an event right away.
+ *
+ * Input Parameters:
+ *   channel - SCMI channel to use for the request
+ *   lmid    - Logical machine to receive events from
+ *   flags   - Events to enable (SCMI_LMM_EVENT_*)
+ *
+ * Returned Value:
+ *   OK on success, a negated errno value on failure.
+ *
+ ****************************************************************************/
+
+int32_t imx9_scmi_lmmnotify(uint32_t channel, uint32_t lmid, uint32_t flags);
+
+/****************************************************************************
+ * Name: imx9_scmi_lmmevent
+ *
+ * Description:
+ *   Read the pending LMM event notification. Only valid in the
+ *   notification callback for SCMI_PROTOCOL_LMM / SCMI_MSG_LMM_EVENT.
+ *
+ * Input Parameters:
+ *   lmid    - Returned ID of the logical machine that caused the
+ *             transition, may be NULL
+ *   eventlm - Returned ID of the logical machine the event is for, may be
+ *             NULL
+ *   flags   - Returned events (SCMI_LMM_EVENT_*), may be NULL
+ *
+ * Returned Value:
+ *   OK on success, -ENODATA if no notification is pending, -EIO on a CRC
+ *   error, -EPROTO if the message is not an LMM event.
+ *
+ ****************************************************************************/
+
+int32_t imx9_scmi_lmmevent(uint32_t *lmid, uint32_t *eventlm,
+                           uint32_t *flags);
+
 #endif /* __ARCH_ARM_SRC_IMX9_IMX9_SCMI_H */

@@ -118,6 +118,14 @@
 
 #define SCMI_MSG_SYSTEM_POWER_STATE_SET 0x3u /* Set system power state */
 
+/* SCMI LMM protocol message IDs (SCMI_MSG_LMM_EVENT is in imx9_scmi.h) */
+
+#define SCMI_MSG_LMM_NOTIFY 0x9u /* Configure LM notifications */
+
+/* SCMI message type of a P2A notification */
+
+#define SCMI_MSG_TYPE_NOTIFY 3u
+
 /* SCMI header creation */
 
 #define SCMI_HEADER_MSG(x)      (((x) & 0xffu) << 0u)
