@@ -51,6 +51,38 @@
  ****************************************************************************/
 
 /****************************************************************************
+ * Name: arm_busfault_fixup
+ *
+ * Description:
+ *   Optional, board/driver-supplied hook that is given the chance to
+ *   recover from a precise data bus fault before the kernel panics.  The
+ *   default implementation (weak) does nothing and returns false, so the
+ *   normal panic path runs.
+ *
+ *   A strong override (e.g. the iMX95 NETC VSI driver) may inspect BFAR /
+ *   CFSR, and if the faulting access targets a known, tolerable window
+ *   (such as a NETC SI register region that the PSI/A55 has torn down),
+ *   advance the stacked return PC past the faulting instruction and
+ *   return true to resume execution instead of panicking.
+ *
+ *   Called with 'regs' pointing at the exception register save area
+ *   (indexable with REG_PC etc.) and 'cfsr' holding the latched
+ *   Configurable Fault Status Register value.
+ *
+ * Returned Value:
+ *   true  - fault handled, resume from the (adjusted) stacked context
+ *   false - not handled, proceed to panic
+ *
+ ****************************************************************************/
+
+bool weak_function arm_busfault_fixup(uint32_t *regs, uint32_t cfsr)
+{
+  UNUSED(regs);
+  UNUSED(cfsr);
+  return false;
+}
+
+/****************************************************************************
  * Name: arm_busfault
  *
  * Description:
@@ -62,6 +94,22 @@
 int arm_busfault(int irq, void *context, void *arg)
 {
   uint32_t cfsr = getreg32(NVIC_CFAULTS);
+
+  /* Give a driver-supplied hook the first chance to recover from a precise
+   * data bus fault (e.g. an access to a NETC SI window the PSI tore down).
+   * If it fixes up the stacked PC and returns true, clear the latched
+   * fault status and resume instead of panicking.
+   */
+
+  if (arm_busfault_fixup((uint32_t *)context, cfsr))
+    {
+      /* Clear the entire latched BusFault status byte (CFSR bits 8..15)
+       * so a stale status/address does not leak into the next fault.
+       */
+
+      putreg32(cfsr & NVIC_CFAULTS_BUSFAULTSR_MASK, NVIC_CFAULTS);
+      return OK;
+    }
 
   bfalert("PANIC!!! Bus Fault:\n");
   bfalert("\tIRQ: %d regs: %p\n", irq, context);
