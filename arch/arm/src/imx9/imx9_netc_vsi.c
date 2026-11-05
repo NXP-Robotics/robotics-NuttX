@@ -56,9 +56,10 @@
 #include <net/ethernet.h>
 
 #include "arm_internal.h"
+#include "nvic.h"
 #include "imx9_msgintr.h"
+
 #include "imx9_netc_priv.h"
-#include "imx9_rptun.h"
 #include "imx9_netc_msg.h"
 
 /* NXP MCUX SDK NETC HAL */
@@ -69,10 +70,6 @@
 /* Board-level configuration (SI index, MSGINTR instance, MAC address) */
 
 #include <arch/board/board.h>
-
-#define ENETC_VSI_DEBUG_TRX
-#define ENETC_VSI_DEBUG_INTR
-
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -94,15 +91,6 @@
 
 #ifndef CONFIG_IMX9_NETC_VSI_READY_POLL_MS
 #  define CONFIG_IMX9_NETC_VSI_READY_POLL_MS  500
-#endif
-
-/* Quiet window (ms) after the rptun first kick before accessing NETC SI regs.
- * The rptun MU7 kick arrives at Linux remoteproc connect; the NETC PF driver
- * that opens the TRDC/XRDC firewall loads later.  This delay bridges the gap.
- */
-
-#ifndef CONFIG_IMX9_NETC_VSI_RPTUN_READY_DELAY_MS
-#  define CONFIG_IMX9_NETC_VSI_RPTUN_READY_DELAY_MS  20000
 #endif
 
 /* Maximum RX frames processed per wakeup before yielding */
@@ -238,6 +226,207 @@ NETC_VSI_DEFINE_INSTANCE(1, IMX9_NETC_VSI1_SI_IDX,
  ****************************************************************************/
 
 /****************************************************************************
+ * Name: imx9_netc_vsi_probe_sriov
+ *
+ * Description:
+ *   Read the PSI's PCIe SR-IOV control register in a bus-fault-safe way.
+ *
+ *   When the PSI firewall (NETCMIX TRDC) is closed, or the PSI owner has
+ *   disappeared (FLR, SR-IOV disable, A55/Linux reboot), a load from the
+ *   PF config space either returns all-ones (0xFFFF) or raises an imprecise
+ *   BusFault (CFSR IMPRECISERR) that would panic the M7. To survive this
+ *   the probe sets the Configuration Control Register (CCR) BFHFNMIGN bit,
+ *   which makes bus faults in privileged mode non-fatal: the faulting load
+ *   is ignored and execution continues, the destination register taking an
+ *   UNKNOWN value.  DSB/ISB barriers bracket the single read so the
+ *   imprecise fault retires inside the window before CCR is restored. This
+ *   mirrors the Zephyr NXP NETC VSI driver's bus-fault suppression during
+ *   SR-IOV readiness polling.
+ *
+ *   Returns true only when the read is a plausible value (not the 0xFFFF
+ *   firewall/absent sentinel) and both the VF-enable and memory-space-enable
+ *   bits are set.
+ *
+ ****************************************************************************/
+
+/****************************************************************************
+ * Name: imx9_netc_vsi_safe_read32
+ *
+ * Description:
+ *   Read a 32-bit MMIO location with ARMv7-M bus faults suppressed, so a
+ *   read of a firewalled / absent NETC window returns a value instead of
+ *   panicking the M7.  The caller detects loss via an all-ones (0xFFFFFFFF)
+ *   result.  See imx9_netc_vsi_probe_sriov() for the BFHFNMIGN rationale.
+ *
+ ****************************************************************************/
+
+static uint32_t imx9_netc_vsi_safe_read32(volatile const uint32_t *addr)
+{
+  uint32_t ccr_save;
+  uint32_t val;
+
+  ccr_save = getreg32(NVIC_CFGCON);
+  putreg32(ccr_save | NVIC_CFGCON_BFHFNMIGN, NVIC_CFGCON); /* ignore bus faults */
+  __asm__ volatile ("dsb" ::: "memory");
+  __asm__ volatile ("isb" ::: "memory");
+
+  val = *addr;                                  /* may fault -> ignored */
+  __asm__ volatile ("dsb" ::: "memory");
+
+  putreg32(ccr_save, NVIC_CFGCON);              /* restore fault behavior */
+  __asm__ volatile ("dsb" ::: "memory");
+  __asm__ volatile ("isb" ::: "memory");
+
+  return val;
+}
+
+/****************************************************************************
+ * Name: imx9_netc_vsi_busfault_ignore / _restore
+ *
+ * Description:
+ *   Enter/leave a window in which ARMv7-M data bus faults are non-fatal
+ *   (CCR.BFHFNMIGN set).  Used to wrap multi-access SI sequences (the
+ *   PSI mailbox / command-BDR path inside program_psi) that cannot be
+ *   made race-free with a pre-check: Linux can tear the VF SI window down
+ *   asynchronously *in the middle* of the sequence, so a probe that passed
+ *   moments earlier is no guarantee.  Within the ignore window a faulting
+ *   load returns UNKNOWN and a faulting store is dropped; the sequence then
+ *   fails its own status/timeout checks and the caller retries once the PSI
+ *   settles, instead of panicking the M7 on a precise BusFault.
+ *
+ *   Returns the saved CCR to pass to _restore().  Nesting is not supported;
+ *   callers must pair begin/restore on the same path.
+ *
+ ****************************************************************************/
+
+static uint32_t imx9_netc_vsi_busfault_ignore(void)
+{
+  uint32_t ccr_save = getreg32(NVIC_CFGCON);
+  putreg32(ccr_save | NVIC_CFGCON_BFHFNMIGN, NVIC_CFGCON);
+  __asm__ volatile ("dsb" ::: "memory");
+  __asm__ volatile ("isb" ::: "memory");
+  return ccr_save;
+}
+
+static void imx9_netc_vsi_busfault_restore(uint32_t ccr_save)
+{
+  __asm__ volatile ("dsb" ::: "memory");
+  putreg32(ccr_save, NVIC_CFGCON);
+  __asm__ volatile ("dsb" ::: "memory");
+  __asm__ volatile ("isb" ::: "memory");
+}
+
+/****************************************************************************
+ * Name: arm_busfault_fixup
+ *
+ * Description:
+ *   Strong override of the weak hook in armv7-m/arm_busfault.c. The ARMv7-M
+ *   CCR.BFHFNMIGN bit only suppresses bus faults while the core already runs
+ *   at priority -1/-2 (HardFault/NMI); it does NOT help in thread or normal
+ *   IRQ context, where an access to a NETC SI window that the PSI/A55 has
+ *   torn down (Linux reboot / SR-IOV disable) escalates to a precise
+ *   BusFault and panics the M7.
+ *
+ *   This handler is the mechanism the Zephyr NXP NETC driver uses: when the
+ *   faulting data address (BFAR) lies inside the NETC SI register aperture,
+ *   treat the access as benign - advance the stacked return PC past the
+ *   faulting load/store (decoding Thumb 16- vs 32-bit instruction length)
+ *   and resume. The in-flight SI sequence then observes an UNKNOWN read /
+ *   dropped write, fails its own status/timeout check, and the VSI service
+ *   thread detects the loss on its next vf_ready() poll and tears the SI
+ *   down cleanly. Any fault outside the NETC aperture is left to panic.
+ *
+ *   NETC SI aperture on iMX95: the per-SI windows observed in the crash
+ *   logs (0x4ca0_0000, 0x4cd3_0000, 0x4cd7_0000, ...) all fall within the
+ *   NETC block 0x4C000000..0x4CFFFFFF.
+ *
+ ****************************************************************************/
+
+#define IMX9_NETC_SI_BASE   0x4c000000ul
+#define IMX9_NETC_SI_LIMIT  0x4cfffffful
+
+bool arm_busfault_fixup(uint32_t *regs, uint32_t cfsr)
+{
+  uint32_t bfar;
+  uint32_t pc;
+  uint16_t hw;
+
+  /* Imprecise data bus error (CFSR IMPRECISERR, BFAR not valid).
+   *
+   * This is a buffered store that already retired; the fault surfaces on
+   * a later, unrelated instruction, so BFAR is meaningless and the stacked
+   * PC does NOT point at the offending access.  We therefore must NOT
+   * advance the PC - the current instruction is innocent and should run.
+   *
+   * On this M7 the only Device-memory writes that can asynchronously fault
+   * are to the NETC SI window being torn down by the PSI/A55 (the driver's
+   * SI register stores), so an imprecise bus error here is always a NETC
+   * teardown artifact.  Barrier to drain any further buffered writes, then
+   * acknowledge and resume at the (innocent) stacked PC.
+   */
+
+  if ((cfsr & NVIC_CFAULTS_IMPRECISERR) != 0)
+    {
+      __asm__ volatile ("dsb" ::: "memory");
+      __asm__ volatile ("isb" ::: "memory");
+      return true;
+    }
+
+  /* Precise error: the stacked PC points at the faulting load/store and
+   * BFAR holds its target address.  Only act when that target is inside
+   * the NETC SI aperture.
+   *
+   * Do NOT require CFSR.BFARVALID here.  A precise fault taken while
+   * CCR.BFHFNMIGN is set (the program_psi bus-fault-ignore window) can be
+   * delivered with the PRECISERR/BFARVALID status bits clear (observed as
+   * CFSR=0x00000000) while BFAR still latches the real faulting NETC SI
+   * address.  Gating on BFARVALID would miss that case and panic.  BFAR is
+   * only meaningless for an imprecise error, which we already returned for
+   * above, so reading it unconditionally here is safe.
+   */
+
+  bfar = getreg32(NVIC_BFAULT_ADDR);
+  if (bfar < IMX9_NETC_SI_BASE || bfar > IMX9_NETC_SI_LIMIT)
+    {
+      return false;
+    }
+
+  /* The faulting instruction is at the stacked return PC.  Decode its
+   * length: a 16-bit Thumb instruction has its first halfword top 5 bits
+   * in 0b11100 or lower (0x0000-0xE7FF); values 0xE800-0xFFFF are the
+   * first halfword of a 32-bit Thumb-2 instruction.  Advance PC by 2 or 4
+   * so execution resumes at the next instruction instead of re-faulting.
+   */
+
+  pc = regs[REG_PC];
+  hw = *(volatile const uint16_t *)(uintptr_t)pc;
+
+  if (hw >= 0xe800u)
+    {
+      regs[REG_PC] = pc + 4u;   /* 32-bit Thumb-2 */
+    }
+  else
+    {
+      regs[REG_PC] = pc + 2u;   /* 16-bit Thumb */
+    }
+
+  return true;
+}
+
+static bool imx9_netc_vsi_probe_sriov(ENETC_PCI_TYPE0_Type *pf,
+                                      uint16_t mask)
+{
+  uint16_t sriov_ctl;
+
+  sriov_ctl = (uint16_t)imx9_netc_vsi_safe_read32(
+                  (volatile const uint32_t *)&pf->PCIE_CFC_SRIOV_CTL);
+
+  /* 0xFFFF == firewall closed or PF gone; require both ready bits set. */
+
+  return (sriov_ctl != 0xffffu) && ((sriov_ctl & mask) == mask);
+}
+
+/****************************************************************************
  * Name: imx9_netc_vsi_vf_ready
  *
  * Description:
@@ -245,18 +434,20 @@ NETC_VSI_DEFINE_INSTANCE(1, IMX9_NETC_VSI1_SI_IDX,
  *   Reads the PCI VF-enable and memory-space-enable bits from the PSI's
  *   PCIe SR-IOV control register.
  *
+ *   This always performs the (bus-fault-safe) probe rather than short-
+ *   circuiting on priv->vf_confirmed, so that a PSI that disappears after
+ *   initial bring-up is detected live.  vf_confirmed is used only to gate
+ *   the one-shot readiness wait in imx9_netc_vsi_wait_ready(), never as an
+ *   access guard.
+ *
  ****************************************************************************/
 
 static bool imx9_netc_vsi_vf_ready(struct imx9_netc_vsi_s *priv)
 {
   const struct imx9_netc_vsi_config_s *cfg = priv->config;
   ENETC_PCI_TYPE0_Type *pf;
+  ENETC_SI_Type        *si;
   uint16_t vf_ready;
-
-  if (priv->vf_confirmed)
-    {
-      return true;
-    }
 
   /* PF PCIe config base addresses (one per ENETC MAC instance).
    * Instance 0 -> index 1 in ENETC_PCI_TYPE0_BASE_ADDRS (index 0 is VSI).
@@ -270,12 +461,39 @@ static bool imx9_netc_vsi_vf_ready(struct imx9_netc_vsi_s *priv)
   vf_ready = ENETC_PCI_TYPE0_PCIE_CFC_SRIOV_CTL_VF_ENABLE_MASK |
              ENETC_PCI_TYPE0_PCIE_CFC_SRIOV_CTL_VF_MSE_MASK;
 
+  if (!imx9_netc_vsi_probe_sriov(pf, vf_ready))
+    {
+      return false;
+    }
+
+  /* The PF SR-IOV control bit can still read "enabled" for a short window
+   * after the PSI/A55 has torn the VF down (reboot / FLR): the PF config
+   * space and the VF SI data window are behind different firewall regions,
+   * and the SI window traps (precise BusFault) before the PF bit clears.
+   * So the PF bit alone is not a sufficient liveness signal.  Additionally
+   * probe the actual VSI SI register window - SICAPR0 is a read-only
+   * capability register at offset 0x900 that reads back a fixed non-zero
+   * value when the window is live and all-ones (or faults -> all-ones via
+   * the safe reader) once the window is firewalled.  Only report ready
+   * when BOTH the PF bit and the live SI window agree.
+   */
+
+  si = priv->handle.hw.si;
+  if (si == NULL)
+    {
+      return false;
+    }
+
   {
-    uint16_t sriov_ctl = pf->PCIE_CFC_SRIOV_CTL;
-    syslog(LOG_DEBUG, "NETC pf=%p PCIE_CFC_SRIOV_CTL=0x%04x mask=0x%04x\n",
-           pf, sriov_ctl, vf_ready);
-    return (sriov_ctl & vf_ready) == vf_ready;
+    uint32_t cap = imx9_netc_vsi_safe_read32(
+                       (volatile const uint32_t *)&si->SICAPR0);
+    if (cap == 0xffffffffu || cap == 0u)
+      {
+        return false;
+      }
   }
+
+  return true;
 }
 
 /****************************************************************************
@@ -306,19 +524,24 @@ static void imx9_netc_vsi_wait_ready(struct imx9_netc_vsi_s *priv)
   syslog(LOG_ERR, "NETC VSI: waiting for PSI ready signal (A55 boot)...\n");
 #endif
 
-  /* Block until the A55 rptun first kick has been received.
-   * The rptun MU7 kick arrives when Linux remoteproc/rpmsg initializes.
-   * The NETCMIX TRDC firewall is opened by the Linux NETC PF driver which
-   * loads AFTER the remoteproc connection.  Wait an additional quiet window
-   * after the kick to ensure the firewall is open before accessing SI regs.
+  /* Poll the (bus-fault-safe) SR-IOV readiness probe until the PSI/A55
+   * NETC PF driver has enabled our VF and opened the NETCMIX TRDC firewall.
+   *
+   * This replaces the previous dependency on the rptun MU7 first kick plus
+   * a fixed CONFIG_IMX9_NETC_VSI_RPTUN_READY_DELAY_MS settle delay.  The
+   * rptun kick only indicated that Linux remoteproc/rpmsg had initialized;
+   * it was an indirect proxy for "PF driver loaded and firewall open" and
+   * forced a long worst-case wait.  imx9_netc_vsi_vf_ready() checks the
+   * actual hardware state (PF SR-IOV VF-enable bit AND a live read of the
+   * VSI SI capability window), so we can detect readiness directly without
+   * the MU dependency and without over-waiting.
    */
-  syslog(LOG_ERR, "NETC VSI: waiting for rptun ready (A55 MU kick)...\n");
-  imx9_rptun_wait_ready();
-  syslog(LOG_ERR,
-         "NETC VSI: rptun kick received, waiting %u ms for TRDC open...\n",
-         (unsigned)CONFIG_IMX9_NETC_VSI_RPTUN_READY_DELAY_MS);
-  nxsig_usleep((uint32_t)CONFIG_IMX9_NETC_VSI_RPTUN_READY_DELAY_MS * 1000u);
-  syslog(LOG_ERR, "NETC VSI: TRDC open, proceeding to SI bringup\n");
+  syslog(LOG_ERR, "NETC VSI: polling for SR-IOV VF enable...\n");
+  while (!imx9_netc_vsi_vf_ready(priv))
+    {
+      nxsig_usleep(CONFIG_IMX9_NETC_VSI_READY_POLL_MS * 1000u);
+    }
+  syslog(LOG_ERR, "NETC VSI: SR-IOV VF ready, proceeding to SI bringup\n");
 
   priv->vf_confirmed = true;
 }
@@ -639,6 +862,23 @@ static void imx9_netc_vsi_program_mac(struct imx9_netc_vsi_s *priv)
 
 static void imx9_netc_vsi_program_psi(struct imx9_netc_vsi_s *priv)
 {
+  uint32_t ccr_save;
+
+  /* program_psi reaches the SI mailbox / command-BDR register path through
+   * the msg helpers (set_primary_mac / set_mac_hash / set_vlan_hash).  The
+   * PSI/A55 can tear the VF SI window down asynchronously *in the middle*
+   * of this multi-register sequence (Linux reboot), so a pre-check with
+   * vf_ready() is racy - the window may pass the probe and then trap a few
+   * instructions later.  Run the whole sequence with data bus faults
+   * suppressed: a faulting access degrades to an UNKNOWN read / dropped
+   * write, the msg helper then fails its own status/timeout check and
+   * returns an error, and the service thread's next loop detects the loss
+   * via vf_ready() and tears the SI down cleanly.  This converts the
+   * precise BusFault panic into a recoverable soft failure.
+   */
+
+  ccr_save = imx9_netc_vsi_busfault_ignore();
+
   imx9_netc_vsi_program_mac(priv);
 
   nxrmutex_lock(&priv->msg_lock);
@@ -655,7 +895,10 @@ static void imx9_netc_vsi_program_psi(struct imx9_netc_vsi_s *priv)
     }
 
   nxrmutex_unlock(&priv->msg_lock);
+
+  imx9_netc_vsi_busfault_restore(ccr_save);
 }
+
 
 /****************************************************************************
  * Name: imx9_netc_vsi_bring_up
@@ -1113,17 +1356,19 @@ static void imx9_netc_vsi_msgintr_cb(int instance, uint8_t channel,
       syslog(LOG_ERR, "VSI %s: MSGINTR MSG fired count=%u pending=0x%08x\n",
              priv->dev.d_ifname, (unsigned)msg_count, (unsigned)pending);
 #endif
-      /* If si_bringup has not yet completed, the rptun semaphore gates
-       * the service thread; this MSG interrupt is informational only.
-       * After vf_confirmed is set (si_bringup done), dispatch normally.
+      /* If si_bringup has not yet completed, the service thread is still
+       * polling vf_ready() for SR-IOV enable; this MSG interrupt is
+       * informational only.  After vf_confirmed is set (si_bringup done),
+       * dispatch normally.
        */
       if (!priv->vf_confirmed)
         {
-          /* rptun semaphore handles the firewall-open signal; MSG interrupt
-           * before si_bringup is informational only.
+          /* The vf_ready() poll in the service thread drives the
+           * firewall-open gate; a MSG interrupt before si_bringup is
+           * informational only.
            */
           syslog(LOG_ERR,
-                 "NETC VSI: MSG interrupt before si_bringup (rptun handles gate)\n");
+                 "NETC VSI: MSG interrupt before si_bringup (vf_ready poll gates)\n");
         }
       else
         {
@@ -1148,9 +1393,43 @@ void imx9_netc_vsi_msg_isr(struct imx9_netc_vsi_s *priv)
       return;
     }
 
+  /* Guard against a PSI that has disappeared (FLR / SR-IOV disable /
+   * A55 reboot).  The PSI may deliver a stale MSG interrupt whose MSIR
+   * bit is set while the SI register window has already become invalid.
+   * imx9_netc_vsi_msg_poll_link() reads SI registers (VSIMSGRR/VSIIDR);
+   * doing so after the window dies raises a precise BusFault that panics
+   * the M7 in ISR context.  Re-validate SR-IOV with the bus-fault-safe
+   * probe first; if the PSI is gone, flag a deferred link-down and let
+   * the service thread tear the SI down from thread context instead of
+   * touching the trapped mapping here.
+   */
+
+  if (!imx9_netc_vsi_vf_ready(priv))
+    {
+      /* PSI gone.  Detach the MSGINTR from within the ISR itself so the
+       * PSI's interrupt storm (it keeps asserting link-up MSG interrupts
+       * as the A55 reboots) stops immediately.  Otherwise each stale MSG
+       * interrupt re-enters this ISR and runs vf_ready()'s fault-safe SI
+       * reads (which fault and are fixed up) before the service thread
+       * ever gets scheduled to detach it - a feedback loop that starves
+       * NSH and the PX4 sensor threads for the whole teardown window.
+       * The service thread re-attaches the MSGINTR on SR-IOV restore.
+       */
+
+      imx9_msgintr_deinit(priv->config->msgintr_instance);
+
+      priv->si_ready          = false;
+      priv->vf_confirmed      = false;
+      priv->link_down_pending = true;
+      nxsem_post(&priv->rx_sem);
+      return;
+    }
+
+
   switch (imx9_netc_vsi_msg_poll_link(priv))
     {
       case IMX9_NETC_MSG_LINK_UP:
+
         /* Ignore spurious LINK_UP before si_ready: bring_up calls
          * program_psi itself; a stale interrupt here would cause a
          * double-message that corrupts the PSI state machine.
@@ -1214,6 +1493,23 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
         (unsigned)loop_count, ready, up, priv->si_ready, priv->link_notify);
 #endif
       loop_count++;
+
+      /* While SR-IOV is down (up == false) the MSGINTR is detached, so no
+       * semaphore post will ever arrive to wake a blocking rx_sem wait -
+       * recovery depends entirely on this thread polling vf_ready().  Do
+       * NOT block on the semaphore in that state; sleep a fixed poll
+       * interval and fall through so the SR-IOV re-check below runs.  A
+       * blocking tickwait here would stall the thread until the next
+       * reboot happens to post rx_sem, which is exactly the "counter
+       * stuck, advances one step per reboot" symptom.
+       */
+
+      if (!up)
+        {
+          nxsig_usleep(CONFIG_IMX9_NETC_VSI_READY_POLL_MS * 1000u);
+        }
+      else
+
       /* Wait for RX wake, txavail notify, link change, or poll timeout.
        * Use a relative-tick wait to avoid depending on CLOCK_REALTIME
        * being set (NuttX boots with tv_sec=0 if no RTC; an absolute
@@ -1222,6 +1518,7 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
        */
 
       if (0 == nxsem_tickwait(&priv->rx_sem, MSEC2TICK(CONFIG_IMX9_NETC_VSI_READY_POLL_MS)))
+
       {
         /* Check needs_bringup before draining: if ifdown was called, the
          * SI BD rings and MSI-X table are in an undefined state; skip rx
@@ -1229,9 +1526,32 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
          */
         if (!priv->needs_bringup && priv->si_ready)
           {
+            int drained = 0;
+
             work = 0;
             while (imx9_netc_vsi_rx(priv) == 0)
               {
+                /* Hard cap the drain.  If the PSI tears the SI window down
+                 * mid-drain, the SI reads inside imx9_netc_vsi_rx() fault
+                 * and are fixed up to garbage, which EP_GetRxFrameSize can
+                 * misread as an endless stream of "valid" frames.  Without
+                 * a cap this spins forever, each iteration taking fixup
+                 * faults in high-priority context and starving NSH and the
+                 * PX4 sensor threads.  Bound the burst and re-check SR-IOV;
+                 * bail out of the drain if the window is gone so the loss
+                 * path below can run.
+                 */
+
+                if (++drained >= (4 * CONFIG_IMX9_NETC_VSI_RX_BUDGET))
+                  {
+                    if (!imx9_netc_vsi_vf_ready(priv))
+                      {
+                        break;
+                      }
+
+                    drained = 0;
+                  }
+
                 if (++work == CONFIG_IMX9_NETC_VSI_RX_BUDGET)
                   {
                     work = 0;
@@ -1242,6 +1562,7 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
           }
       }
 
+
       /* Drain any extra posts the ISR accumulated while we were working. */
 
       while (nxsem_trywait(&priv->rx_sem) == 0)
@@ -1249,24 +1570,55 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
           /* consumed */
       }
 
-      /* ready = imx9_netc_vsi_vf_ready(priv); */
+      /* Refresh SR-IOV readiness every loop with the bus-fault-safe probe
+       * so a PSI that disappears (FLR / SR-IOV disable / A55 reboot) is
+       * detected here before any SI-register access below (RX drain,
+       * program_psi, TX poll).  This must be a live probe, not a one-shot
+       * cached value, or the loss path never fires and the thread drives
+       * program_psi into the dead SI window (precise BusFault).
+       */
+
+      ready = imx9_netc_vsi_vf_ready(priv);
 
       if (up && !ready)
+
         {
           nxrmutex_lock(&priv->msg_lock);
           priv->si_ready = false;
           nxrmutex_unlock(&priv->msg_lock);
           netdev_carrier_off(&priv->dev);
+
+          /* Silence the MSGINTR for this instance while SR-IOV is down.
+           * Otherwise the PSI (as the A55 reboots) keeps firing link-up
+           * MSG interrupts; each one dispatches into SI register reads
+           * that now fault and are single-stepped by the busfault fixup.
+           * That fault storm runs in high-priority exception context and
+           * starves NSH and the PX4 sensor threads (observed console lag
+           * and sensor TIMEOUTs).  Detaching the MSGINTR stops the storm;
+           * the service thread's periodic vf_ready() poll (tickwait) is
+           * what drives recovery, so no interrupt is needed while down.
+           */
+
+          imx9_msgintr_deinit(priv->config->msgintr_instance);
+          priv->vf_confirmed = false;
+
           syslog(LOG_ERR, "VSI %s: link DOWN (SR-IOV lost)\n",
                  priv->dev.d_ifname);
           up = false;
         }
       else if (!up && ready)
         {
+          /* Re-attach the MSGINTR before bring-up so PSI->VSI link
+           * messages are delivered again once the SI is live.
+           */
+
+          imx9_msgintr_init(priv->config->msgintr_instance,
+                            imx9_netc_vsi_msgintr_cb, priv);
           imx9_netc_vsi_bring_up(priv);
           up = true;
           priv->si_ready = true;
         }
+
 
       /* Handle ifdown/ifup cycle: si_bringup must be re-run because
        * ifdown masked the MSI-X table and stopped the SI.  The 'up'
@@ -1317,11 +1669,32 @@ static int imx9_netc_vsi_thread(int argc, char *argv[])
       if (priv->link_notify)
         {
           priv->link_notify = false;
-          imx9_netc_vsi_program_psi(priv);
-          netdev_carrier_on(&priv->dev);
-          syslog(LOG_ERR, "VSI %s: link UP; PSI reprogrammed\n",
-                 priv->dev.d_ifname);
+
+          /* Re-validate the SI window immediately before touching it.
+           * On PSI re-enable (Linux boot) the PSI emits a storm of
+           * link-up MSG interrupts; each sets link_notify.  program_psi()
+           * reaches the SI command-BDR register path (via the msg
+           * helpers), which can still fault during the re-enable
+           * transient even though the loop-top probe briefly passed.
+           * Skip reprogramming unless the window is confirmed live; a
+           * later interrupt (or the next loop) retries once it settles.
+           */
+
+          if (ready && imx9_netc_vsi_vf_ready(priv))
+            {
+              imx9_netc_vsi_program_psi(priv);
+              netdev_carrier_on(&priv->dev);
+              syslog(LOG_ERR, "VSI %s: link UP; PSI reprogrammed\n",
+                     priv->dev.d_ifname);
+            }
+          else
+            {
+              syslog(LOG_ERR,
+                     "VSI %s: link UP ignored, SI not live yet\n",
+                     priv->dev.d_ifname);
+            }
         }
+
 
       if (!priv->si_ready)
         {
