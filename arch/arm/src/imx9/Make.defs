@@ -28,7 +28,7 @@ include armv7-m/Make.defs
 CHIP_CSRCS = imx9_allocateheap.c imx9_start.c imx9_clockconfig.c imx9_gpio.c imx9_iomuxc.c imx9_irq.c imx9_timerisr.c imx9_idle.c
 
 ifeq ($(CONFIG_IMX9_SCMI),y)
-  CHIP_CSRCS += imx9_scmi.c
+  CHIP_CSRCS += imx9_scmi.c imx9_reset.c
   # NXP SDK SCMI interface for pinctrl and clocking
 endif
 

@@ -2,7 +2,7 @@
  * arch/arm/src/imx9/imx9_start.c
  *
  * SPDX-License-Identifier: Apache-2.0
- * SPDX-FileCopyrightText: 2024 NXP
+ * SPDX-FileCopyrightText: 2026 NXP
  *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -226,6 +226,7 @@ void __start(void)
 
 #ifdef CONFIG_IMX9_SCMI
   imx9_scmi_initialize();
+  imx9_scmi_registercallback();
 #endif
 
   /* Configure the UART so that we can get debug output as soon as possible */

@@ -516,8 +516,11 @@ void up_irqinitialize(void)
   imx9_gpioirq_initialize();
 #endif
 
-  /* And finally, enable interrupts */
+#ifdef CONFIG_IMX9_SCMI
+  imx9_scmi_irq_enable();
+#endif
 
+  /* And finally, enable interrupts */
   up_irq_enable();
 #endif
 }

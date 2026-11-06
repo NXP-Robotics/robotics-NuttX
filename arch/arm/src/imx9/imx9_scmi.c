@@ -2,7 +2,7 @@
  * arch/arm/src/imx9/imx9_scmi.c
  *
  * SPDX-License-Identifier: Apache-2.0
- * SPDX-FileCopyrightText: 2024 NXP
+ * SPDX-FileCopyrightText: 2026 NXP
  *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -98,7 +98,7 @@
 #define SCMI_MSG_PINCTRL_RELEASE 0x9u         /* Release a pin */
 
 /* SCMI misc protocol message IDs */
-
+#define SCMI_MSG_MISC_NOTIFY  0x8u /* Get MISC notifications */
 #define SCMI_MSG_MISC_SI_INFO 0xbu /* Get silicon info */
 
 /* SCMI LMM protocol message IDs (SCMI_MSG_LMM_EVENT is in imx9_scmi.h) */
@@ -518,6 +518,19 @@ static int32_t imx9_smt_rx(uint32_t smtchannel, uint32_t *len, bool callee)
   /* Return status */
 
   return status;
+}
+
+void scmi_notify_cb(uint32_t protocol, uint32_t msgid, void *arg)
+{
+  switch(protocol)
+  {
+      case SCMI_PROTOCOL_MISC:
+          if(msgid == 0x8005)
+              /* TODO: implement response */
+            if(imx9_reset_getallowed())
+              imx9_reset_perform();
+      break;
+  }
 }
 
 /* SCMI P2A notifications, called from the MU interrupt */
@@ -1077,6 +1090,62 @@ int32_t imx9_scmi_pinctrlconfigset(uint32_t channel, uint32_t identifier,
   return status;
 }
 
+int32_t imx9_scmi_miscnotify(uint32_t channel, uint32_t ctrlId, uint32_t flags)
+{
+  int32_t status;
+  uint32_t header;
+  void *msg;
+
+  /* Acquire lock */
+
+  SCMI_A2P_LOCK(channel);
+
+  /* Init buffer */
+
+  status = imx9_scmi_bufinit(channel, &msg);
+
+  /* Send request */
+
+  if (status == OK)
+    {
+      /* Request message structure */
+
+      typedef struct
+      {
+        uint32_t header;
+        uint32_t ctrlId;
+        uint32_t flags;
+      } msg_misc_t;
+
+      msg_misc_t *msgtx = (msg_misc_t *)msg;
+
+      /* Fill in parameters */
+      msgtx->ctrlId  = ctrlId;
+      msgtx->flags = flags;
+
+      /* Send message */
+
+      status = imx9_scmi_a2ptx(channel, SCMI_PROTOCOL_MISC,
+                               SCMI_MSG_MISC_NOTIFY, sizeof(msg_misc_t),
+                               &header);
+    }
+
+  /* Receive response */
+
+  if (status == OK)
+    {
+      status = imx9_scmi_a2prx(channel, sizeof(msg_status_t), header);
+    }
+
+  /* Release lock */
+
+  SCMI_A2P_UNLOCK(channel);
+
+  /* Return status */
+
+  return status;
+}
+
 int32_t imx9_scmi_siinfoget(uint32_t channel, scmi_si_info_t *info)
 {
   int32_t status;
@@ -1299,12 +1368,7 @@ int32_t imx9_scmi_notify_register(imx9_scmi_notify_cb_t cb, void *arg)
   g_notify_cb  = cb;
   g_notify_arg = arg;
 
-  /* imx9_scmi_initialize() runs from __start(), before irq_initialize()
-   * and up_irqinitialize() reset the vector table and the NVIC, so the MU
-   * interrupt set up there is lost. Attach and enable it now.
-   */
 
-  imx95_mu_enable_irq(g_mudev);
 
   /* The SM only sends a notification once the channel is marked free */
 
@@ -1314,6 +1378,15 @@ int32_t imx9_scmi_notify_register(imx9_scmi_notify_cb_t cb, void *arg)
                          imx9_scmi_gpi_callback);
 
   return OK;
+}
+
+  /* imx9_scmi_initialize() runs from __start(), before irq_initialize()
+   * and up_irqinitialize() reset the vector table and the NVIC, so the MU
+   * interrupt set up there is lost. Attach and enable it now.
+   */
+void imx9_scmi_irq_enable(void)
+{
+  imx95_mu_enable_irq(g_mudev);
 }
 
 int32_t imx9_scmi_lmmnotify(uint32_t channel, uint32_t lmid, uint32_t flags)
@@ -1568,6 +1641,17 @@ int32_t imx9_scmi_bbmgprget(uint32_t channel, uint32_t index,
   /* Return status */
 
   return status;
+}
+
+int32_t imx9_scmi_registercallback(void)
+{
+  int32_t result;
+  result = imx9_scmi_miscnotify(0u, 0x8005, 0x1); /* subscribe to reset request */
+
+  if(result == OK)
+      result = imx9_scmi_notify_register(scmi_notify_cb, NULL);
+
+  return result;
 }
 
 #endif /* CONFIG_IMX9_SCMI */

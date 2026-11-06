@@ -2,7 +2,7 @@
  * arch/arm/src/imx9/imx9_scmi.h
  *
  * SPDX-License-Identifier: Apache-2.0
- * SPDX-FileCopyrightText: 2024 NXP
+ * SPDX-FileCopyrightText: 2026 NXP
  *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -250,6 +250,8 @@ int32_t imx9_scmi_syspowerstateset(uint32_t channel, uint32_t flags,
 int32_t imx9_scmi_cpuresetvectorset(uint32_t channel, uint32_t cpuid,
     uint32_t flags, uint64_t resetvector);
 
+void imx9_scmi_irq_enable(void);
+
 /****************************************************************************
  * Name: imx9_scmi_siinfoget
  *
@@ -393,6 +395,26 @@ int32_t imx9_scmi_bbmgprget(uint32_t channel, uint32_t index,
 #if defined(__cplusplus)
 }
 #endif
+
+/****************************************************************************
+ * Name: imx9_scmi_miscnotify
+ *
+ * Description:
+ *   Subscribe to notifications  via the SCMI MISC protocol.
+ *   Register the notification callback first, the
+ *   System Manager may send an event right away.
+ *
+ * Input Parameters:
+ *   channel - SCMI channel to use for the request
+ *   ctrlId  - ID of control for which to subscribe
+ *   flags   - Events to enable (SCMI_MISC_EVENT_*)
+ *
+ * Returned Value:
+ *   OK on success, a negated errno value on failure.
+ *
+ ****************************************************************************/
+int32_t imx9_scmi_miscnotify(uint32_t channel, uint32_t ctrlId, uint32_t flags);
+
 /****************************************************************************
  * Name: imx9_scmi_notify_register
  *
@@ -461,5 +483,18 @@ int32_t imx9_scmi_lmmnotify(uint32_t channel, uint32_t lmid, uint32_t flags);
 
 int32_t imx9_scmi_lmmevent(uint32_t *lmid, uint32_t *eventlm,
                            uint32_t *flags);
+
+ /****************************************************************************
+ * Name: imx9_scmi_notify_cb
+ *
+ * Description:
+ *   Callback function for SCMI notifications
+ *
+ * Returned Value:
+ *   OK on success
+ *
+ ****************************************************************************/
+int32_t imx9_scmi_registercallback(void);
+
 
 #endif /* __ARCH_ARM_SRC_IMX9_IMX9_SCMI_H */
