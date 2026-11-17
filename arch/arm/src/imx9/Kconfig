@@ -42,7 +42,7 @@ config IMX9_CLK_OVER_SCMI
 
 config IMX9_IOMUX_OVER_SCMI
 	bool "Configure IOMUX over SCMI"
-	default n
+	default y
 
 endif
 
