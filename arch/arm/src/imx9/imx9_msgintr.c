@@ -98,6 +98,17 @@
   (IMX9_IRQSTEER_BASE + (IMX9_IRQSTEER_REG_NUM * 8u) + \
    4u * IRQSTEER_REG_IDX(sysirq) + 4u)
 
+/* IRQSTEER master interrupt-output gate.
+ * Each bit corresponds to one master aggregation group; our MSGINTR inputs
+ * fan into master0 (bit 0).  Clearing bit 0 enables the master output.
+ */
+
+#define IMX9_IRQSTEER_MINTDIS \
+  (IMX9_IRQSTEER_BASE + 0x04u + (IMX9_IRQSTEER_REG_NUM * 4u * 3u))
+#define IMX9_IRQSTEER_MASTRSTAT   (IMX9_IRQSTEER_MINTDIS + 0x04u)
+#define IMX9_IRQSTEER_MASTER0_BIT (1u << 0)
+
+
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
@@ -288,10 +299,31 @@ int imx9_msgintr_init(int instance, imx9_msgintr_cb_t callback, void *arg)
   putreg32(val | bit, regaddr);
   val = getreg32(regaddr);   /* readback */
 
+  /* Enable the IRQSTEER master0 output gate.
+   *
+   * CHANMASK (above) only lets the per-input assertion into the master0
+   * aggregation; a separate per-master output-disable register, CHn_MINTDIS,
+   * gates the aggregated status onto the NVIC line.
+   */
+
+  {
+    uint32_t mintdis = getreg32(IMX9_IRQSTEER_MINTDIS);
+    putreg32(mintdis & ~IMX9_IRQSTEER_MASTER0_BIT, IMX9_IRQSTEER_MINTDIS);
+  }
+
 #ifdef ENETC_VSI_DEBUG_INTR
   syslog(LOG_ERR,
          "MSGINTR%d: IRQSTEER CHANMASK sysirq=%u regaddr=0x%08x bit=0x%08x readback=0x%08x\n",
          instance, sysirq, (unsigned)regaddr, bit, val);
+
+  syslog(LOG_ERR,
+         "MSGINTR%d: IRQSTEER MINTDIS@0x%08x=0x%08x MASTRSTAT@0x%08x=0x%08x\n",
+         instance,
+         (unsigned)IMX9_IRQSTEER_MINTDIS,
+         (unsigned)getreg32(IMX9_IRQSTEER_MINTDIS),
+         (unsigned)IMX9_IRQSTEER_MASTRSTAT,
+         (unsigned)getreg32(IMX9_IRQSTEER_MASTRSTAT));
+
 
   syslog(LOG_ERR,
          "MSGINTR%d: attaching ISR to IMX9_IRQ_IRQSTEER_0=%d (extint=%d)\n",
