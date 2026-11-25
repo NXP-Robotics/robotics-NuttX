@@ -136,7 +136,16 @@ int imx9_iomux_configure(iomux_cfg_t cfg)
   sm_pinctrl.input_register  = IMX9_IOMUXC_BASE + cfg.padcfg.dsyregoff;
   sm_pinctrl.input_daisy     = cfg.padcfg.dsy;
   sm_pinctrl.config_register = IMX9_IOMUXC_BASE + cfg.padcfg.padregoff;
-  sm_pinctrl.config_value    = cfg.pad;
+
+  /* cfg.pad holds the pad control value right-shifted by
+   * IOMUXC_PAD_CONFIG_SHIFT (see IOMUX_CFG() in imx9_iomuxc.h), because the
+   * bitfield is only 31 bits wide. The direct register path below undoes
+   * that shift when it writes PAD_CTL, so the SCMI path must do the same
+   * before handing the value to the System Manager.
+   */
+
+  sm_pinctrl.config_value    = cfg.pad << IOMUXC_PAD_CONFIG_SHIFT;
+
   sm_pinctrl.input_on_field  = cfg.sion;
 
   imx9_sm_iomucx_configure(&sm_pinctrl);
